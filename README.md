@@ -52,8 +52,21 @@ The package exports nothing outside Windows. On Windows it exports exactly the A
 - `type Session` with `End()`, `ReadWaitEvent() windows.Handle`, `ReceivePacket() ([]byte, error)`, `ReleaseReceivePacket([]byte)`, `AllocateSendPacket(int) ([]byte, error)` and `SendPacket([]byte)`; `type Packet`, `const PacketSizeMax`, `RingCapacityMin` and `RingCapacityMax`.
 - `func Uninstall() error`, `func RunningVersion() (uint32, error)`, and `type TimestampedWriter`, which the DLL's log messages go to when it is the writer of the standard logger.
 - `func Version() string` returns the Wintun version of the embedded DLL, 0.14.1, without loading it.
+- The subpackage `github.com/wzshiming/wintun/tun` exports, on Windows only, the Windows-specific API of wireguard-go's `tun` package at v0.0.0-20261024220952-b3bc704ef0ee: `var WintunTunnelType`, `var WintunStaticRequestedGUID *windows.GUID`, `func CreateTUN(ifname string, mtu int) (tun.Device, error)`, `func CreateTUNWithRequestedGUID(ifname string, requestedGUID *windows.GUID, mtu int) (tun.Device, error)` and `type NativeTun` with `LUID() uint64`, `RunningVersion() (uint32, error)`, `ForceMTU(int)` and the methods of `tun.Device`.
 
 Unlike `golang.zx2c4.com/wintun`, which panics when the DLL cannot load or lacks an export, every function with an error result returns that failure; the others are reached only through an `Adapter` or a `Session`, after a successful load.
+
+## TUN device
+
+[`./tun`](tun) is wireguard-go's Windows `NativeTun` ported onto this package, so one call returns a `golang.zx2c4.com/wireguard/tun.Device` backed by the in-memory DLL. Code using wireguard-go's `tun.CreateTUN` on Windows switches by changing its import path; the root package itself never imports wireguard-go.
+
+```go
+import wintuntun "github.com/wzshiming/wintun/tun"
+
+dev, err := wintuntun.CreateTUN("wg0", 0) // MTU 0 means wireguard-go's default, 1420
+```
+
+The e2e module's `TestE2ETUN` creates such a device with a fixed GUID, assigns it 198.18.0.9/30, reads with `Read` a UDP datagram the host sends to 198.18.0.10, writes back one with `Write` that the sending socket receives, closes the device and waits for the interface to go away; CI requires it to pass beside `TestE2EAdapter`.
 
 ## Embedded DLLs
 
