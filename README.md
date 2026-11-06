@@ -10,7 +10,7 @@ go get github.com/wzshiming/wintun
 
 ## API
 
-- `const Embedded bool` — Windows only: whether this build carries a `wintun.dll` (amd64 and arm64).
+- `const Embedded bool` — Windows only: whether this build carries a `wintun.dll` (386, amd64 and arm64).
 - `var CacheDir func() (string, error)` — the directory the embedded `wintun.dll` is extracted into on Windows, as `<GOARCH>-<hash>/wintun.dll` (default `os.UserCacheDir()/wintun`); programs may replace it.
 - `func Load() error` — Windows only: extracts the embedded `wintun.dll` under `CacheDir()`, verifies it and loads it once per process; wraps `errors.ErrUnsupported` when none is embedded.
 
