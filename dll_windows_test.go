@@ -119,8 +119,8 @@ func TestStagedImageIsReleasedAndItsErrorReturnedWhenUseFails(t *testing.T) {
 func TestNewLazyDLLLoadsNothing(t *testing.T) {
 	d := newLazyDLL("wintun.dll", dll, nil)
 	p := d.NewProc("WintunGetRunningDriverVersion")
-	if d.module.Load() != nil || d.Base != 0 || p.addr.Load() != 0 {
-		t.Errorf("constructing a lazy DLL and proc loaded the module at %#x", d.Base)
+	if d.module.Load() != nil || d.base() != 0 || p.addr.Load() != 0 {
+		t.Errorf("constructing a lazy DLL and proc loaded the module at %#x", d.base())
 	}
 }
 
@@ -152,7 +152,7 @@ func TestLazyDLLLoadReturnsTheErrorOfOnLoadForAMissingExport(t *testing.T) {
 	if err := d.NewProc("WintunGetRunningDriverVersion").Find(); err == nil {
 		t.Error("Find = nil though onLoad failed, want its error")
 	}
-	if d.module.Load() != nil || d.Base != 0 {
+	if d.module.Load() != nil || d.base() != 0 {
 		t.Error("a failed onLoad left the module loaded")
 	}
 }

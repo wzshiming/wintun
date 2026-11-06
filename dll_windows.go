@@ -65,7 +65,6 @@ func (p *lazyProc) Addr() uintptr {
 // lazyDLL loads the DLL image data from memory with memmod on first use and never frees it.
 type lazyDLL struct {
 	Name   string
-	Base   windows.Handle
 	data   []byte
 	mu     sync.Mutex
 	module atomic.Pointer[memmod.Module]
@@ -97,15 +96,23 @@ func (d *lazyDLL) Load() error {
 			return err
 		}
 	}
-	d.Base = windows.Handle(module.BaseAddr())
-
 	d.module.Store(module)
 	return nil
+}
+
+// base returns the address the module is loaded at, or 0 before it is.
+func (d *lazyDLL) base() windows.Handle {
+	module := d.module.Load()
+	if module == nil {
+		return 0
+	}
+	return windows.Handle(module.BaseAddr())
 }
 
 // withStagedImage calls use with a copy of data in memory Go does not manage, released once use returns.
 // memmod's Sections converts the section table to a 0xffff-entry array, which checkptr rejects when it reaches past
 // the Go object holding the image into another, so the allocation reserves that whole span past the image's end.
+// The 0xffff reserve mirrors memmod's Sections casting the table to *[0xffff]IMAGE_SECTION_HEADER; change both together.
 func withStagedImage(data []byte, use func(image []byte) error) error {
 	size := uintptr(len(data)) + 0xffff*unsafe.Sizeof(memmod.IMAGE_SECTION_HEADER{})
 	addr, err := windows.VirtualAlloc(0, size, windows.MEM_RESERVE|windows.MEM_COMMIT, windows.PAGE_READWRITE)

@@ -126,7 +126,7 @@ func TestVersionIsTheResourceVersionOfTheInMemoryModule(t *testing.T) {
 	if err := modwintun.Load(); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := ttResourceVersion(t, modwintun.Base), Version(); got != want {
+	if got, want := ttResourceVersion(t, modwintun.base()), Version(); got != want {
 		t.Errorf("the in-memory wintun.dll is version %s, Version() = %s", got, want)
 	}
 }
