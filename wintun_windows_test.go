@@ -8,8 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 	"slices"
+	"syscall"
 	"testing"
 	"unsafe"
 
