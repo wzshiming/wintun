@@ -22,7 +22,7 @@ type loader struct {
 	beforeOpen func(path string)
 
 	mu sync.Mutex
-	// module is the loaded wintun.dll, which golang.zx2c4.com/wintun then finds by its base name.
+	// module is the loaded wintun.dll, never freed, so that golang.zx2c4.com/wintun finds it by its base name.
 	module windows.Handle
 }
 
@@ -36,11 +36,11 @@ var defaultLoader = &loader{
 	beforeOpen: func(string) {},
 }
 
-// Load extracts the embedded wintun.dll and loads it once per process.
-func Load() error {
+func load() error {
 	return defaultLoader.load()
 }
 
+// load is Load for l: it applies the "wintun: " prefix, which the helpers it calls leave out.
 func (l *loader) load() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
