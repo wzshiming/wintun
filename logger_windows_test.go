@@ -74,6 +74,7 @@ func ttRecord(t *testing.T) func() []ttLogEntry {
 	}
 }
 
+// ttTimestampedWriter is unsynchronised on purpose: under -race it pins that logMessage serialises its writes.
 type ttTimestampedWriter struct {
 	p  []byte
 	ts int64

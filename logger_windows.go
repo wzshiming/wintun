@@ -8,6 +8,7 @@ package wintun
 import (
 	"log"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -37,6 +38,9 @@ type TimestampedWriter interface {
 
 var logger atomic.Pointer[Logger]
 
+// timestampedWriteMu serialises WriteWithTimestamp as log.Logger serialises Write.
+var timestampedWriteMu sync.Mutex
+
 // SetLogger routes the DLL's log messages to l, before or after the DLL loads. A nil l restores the default: the
 // standard logger's TimestampedWriter if its writer is one, log.Println otherwise.
 func SetLogger(l Logger) {
@@ -58,11 +62,18 @@ func logMessage(level LogLevel, timestamp uint64, msg *uint16) int {
 		return 0
 	}
 	if tw, ok := log.Default().Writer().(TimestampedWriter); ok {
-		tw.WriteWithTimestamp([]byte(log.Default().Prefix()+message), (int64(timestamp)-116444736000000000)*100)
+		writeWithTimestamp(tw, []byte(log.Default().Prefix()+message), (int64(timestamp)-116444736000000000)*100)
 	} else {
 		log.Println(message)
 	}
 	return 0
+}
+
+func writeWithTimestamp(tw TimestampedWriter, p []byte, ts int64) {
+	timestampedWriteMu.Lock()
+	// Deferred so a panicking writer unlocks before logMessage recovers.
+	defer timestampedWriteMu.Unlock()
+	tw.WriteWithTimestamp(p, ts)
 }
 
 // loggerCallback returns logMessage as a WINTUN_LOGGER_CALLBACK for the windows/386, amd64 and arm64 builds, the only
