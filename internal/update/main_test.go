@@ -89,7 +89,7 @@ func ttWantNothingWritten(t *testing.T, root string) {
 	}
 }
 
-func TestRunWritesEachArchitecturesDLLTheLicenseAndVersion(t *testing.T) {
+func TestRunMirrorsTheReleasesLicenseAndDLLsAndWritesVersion(t *testing.T) {
 	data, sum := ttZip(t, ttRelease)
 	root := t.TempDir()
 	if err := run(root, ttServe(t, data), "9.9", sum); err != nil {
@@ -99,10 +99,11 @@ func TestRunWritesEachArchitecturesDLLTheLicenseAndVersion(t *testing.T) {
 	version := got["version.go"]
 	delete(got, "version.go")
 	want := map[string]string{
-		"bin/LICENSE.txt":      "license",
-		"bin/386/wintun.dll":   "x86 dll",
-		"bin/amd64/wintun.dll": "amd64 dll",
-		"bin/arm64/wintun.dll": "arm64 dll",
+		"embedded/LICENSE.txt":          "license",
+		"embedded/bin/x86/wintun.dll":   "x86 dll",
+		"embedded/bin/amd64/wintun.dll": "amd64 dll",
+		"embedded/bin/arm64/wintun.dll": "arm64 dll",
+		"embedded/bin/arm/wintun.dll":   "arm dll",
 	}
 	if !maps.Equal(got, want) {
 		t.Errorf("wrote %q, want %q", got, want)
@@ -112,6 +113,24 @@ func TestRunWritesEachArchitecturesDLLTheLicenseAndVersion(t *testing.T) {
 	}
 	if formatted, err := format.Source([]byte(version)); err != nil || string(formatted) != version {
 		t.Errorf("version.go is not gofmt-formatted: %v", err)
+	}
+}
+
+func TestRunRemovesOtherFilesFromEmbedded(t *testing.T) {
+	data, sum := ttZip(t, ttRelease)
+	root := t.TempDir()
+	stale := filepath.Join(root, "embedded", "bin", "amd64", "stale.dll")
+	if err := os.MkdirAll(filepath.Dir(stale), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stale, []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(root, ttServe(t, data), "9.9", sum); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("stat %s: %v, want it removed", stale, err)
 	}
 }
 
@@ -125,14 +144,19 @@ func TestRunWritesNothingForAZipWithAnotherSum(t *testing.T) {
 }
 
 func TestRunWritesNothingForAZipMissingADLL(t *testing.T) {
-	release := maps.Clone(ttRelease)
-	delete(release, "wintun/bin/x86/wintun.dll")
-	data, sum := ttZip(t, release)
-	root := t.TempDir()
-	if err := run(root, ttServe(t, data), "9.9", sum); err == nil || !strings.Contains(err.Error(), "wintun/bin/x86/wintun.dll") {
-		t.Errorf("run = %v, want an error naming the missing x86 DLL", err)
+	for _, dir := range []string{"x86", "amd64", "arm64", "arm"} {
+		t.Run(dir, func(t *testing.T) {
+			name := "wintun/bin/" + dir + "/wintun.dll"
+			release := maps.Clone(ttRelease)
+			delete(release, name)
+			data, sum := ttZip(t, release)
+			root := t.TempDir()
+			if err := run(root, ttServe(t, data), "9.9", sum); err == nil || !strings.Contains(err.Error(), name) {
+				t.Errorf("run = %v, want an error naming %s", err, name)
+			}
+			ttWantNothingWritten(t, root)
+		})
 	}
-	ttWantNothingWritten(t, root)
 }
 
 func TestRunFailsWhenTheDownloadFails(t *testing.T) {
@@ -145,12 +169,12 @@ func TestRunFailsWhenTheDownloadFails(t *testing.T) {
 }
 
 func TestFlagPatternsAcceptOnlyAVersionAndAHexSum(t *testing.T) {
-	for _, v := range []string{"0.14.1", "1.0", "1.2.3.4"} {
+	for _, v := range []string{"1.2.3", "1.0", "1.2.3.4"} {
 		if !versionPattern.MatchString(v) {
 			t.Errorf("version %q refused", v)
 		}
 	}
-	for _, v := range []string{"", "1", "0.14.1/../x", "0.14.1?", "v0.14.1"} {
+	for _, v := range []string{"", "1", "1.2.3/../x", "1.2.3?", "v1.2.3"} {
 		if versionPattern.MatchString(v) {
 			t.Errorf("version %q accepted", v)
 		}

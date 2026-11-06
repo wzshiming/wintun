@@ -1,7 +1,6 @@
-// Command update replaces the embedded Wintun DLLs, their license and Version with those of a release from
-// https://www.wintun.net, after checking the release zip against the SHA-256 published there.
-//
-//	go run ./internal/update -version 0.14.1 -sha256 07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51
+// Command update replaces embedded/ with the license and DLLs of a Wintun release from https://www.wintun.net,
+// mirroring the zip's wintun/ directory, and regenerates version.go, after checking the release zip against the
+// SHA-256 published there. The version and SHA-256 are the flags of the //go:generate directive in generate.go.
 //
 // It writes below the current directory, which is the module root when go generate runs it.
 package main
@@ -25,9 +24,8 @@ import (
 	"time"
 )
 
-// goarchs maps each GOARCH that embeds a DLL to its directory under wintun/bin in the zip.
-// The zip's arm DLL is left out, as Go removed windows/arm in 1.26.
-var goarchs = map[string]string{"386": "x86", "amd64": "amd64", "arm64": "arm64"}
+// mirrored are the files of the zip's wintun/ directory that embedded/ holds.
+var mirrored = []string{"LICENSE.txt", "bin/x86/wintun.dll", "bin/amd64/wintun.dll", "bin/arm64/wintun.dll", "bin/arm/wintun.dll"}
 
 var (
 	versionPattern = regexp.MustCompile(`^[0-9]+(\.[0-9]+){1,3}$`)
@@ -35,7 +33,7 @@ var (
 )
 
 func main() {
-	version := flag.String("version", "", "Wintun `version` to embed, such as 0.14.1")
+	version := flag.String("version", "", "Wintun `version` to embed, such as 1.2.3")
 	sum := flag.String("sha256", "", "`SHA-256` of wintun-<version>.zip as published on https://www.wintun.net")
 	flag.Parse()
 	if !versionPattern.MatchString(*version) || !sumPattern.MatchString(*sum) || flag.NArg() != 0 {
@@ -59,6 +57,9 @@ func run(root, url, version, sum string) error {
 		return fmt.Errorf("%s: %w", url, err)
 	}
 	if files["version.go"], err = versionFile(version); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(filepath.Join(root, "embedded")); err != nil {
 		return err
 	}
 	for _, name := range slices.Sorted(maps.Keys(files)) {
@@ -97,9 +98,9 @@ func extract(data []byte, sum string) (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	want := map[string]string{"wintun/LICENSE.txt": "bin/LICENSE.txt"}
-	for goarch, dir := range goarchs {
-		want["wintun/bin/"+dir+"/wintun.dll"] = "bin/" + goarch + "/wintun.dll"
+	want := make(map[string]string)
+	for _, name := range mirrored {
+		want["wintun/"+name] = "embedded/" + name
 	}
 	files := make(map[string][]byte)
 	for _, f := range zr.File {
