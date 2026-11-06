@@ -1,4 +1,5 @@
-// Package wintun embeds the Wintun DLL and, on Windows, loads a verified copy of it from the cache directory.
+// Package wintun embeds the signed Wintun DLLs for windows/386, windows/amd64 and windows/arm64 and, on Windows, loads
+// a verified copy of the one for GOARCH from the cache directory.
 package wintun
 
 import (
