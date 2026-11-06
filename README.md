@@ -57,11 +57,13 @@ func open() (tun.Device, error) { // golang.zx2c4.com/wireguard/tun
 
 ## End-to-end tests
 
-The end-to-end tests in [`./e2e`](e2e) load the real `wintun.dll` on Windows. Every test skips unless `WINTUN_E2E=1`.
+The end-to-end tests in [`./e2e`](e2e) load the real `wintun.dll` on Windows. They are a module of their own, which replaces `github.com/wzshiming/wintun` with `../`, so only they require `golang.zx2c4.com/wintun`; run them from the `e2e` directory. Every test skips unless `WINTUN_E2E=1`.
 
 ```sh
-WINTUN_E2E=1 go test ./e2e -v
+WINTUN_E2E=1 go test -C e2e -v .
 ```
+
+For an IDE that should see both modules at once, a local `go work init . ./e2e` is ignored by git and not committed.
 
 - `TestE2ELoad`: `Load` loads the DLL from under `CacheDir()`, every function of `wintun.h` resolves in it, and `golang.zx2c4.com/wintun` finds it by its base name and reads its version, `Version`.
 - `TestE2ESignature`: `WinVerifyTrust` trusts the Authenticode signature of the extracted DLL.
