@@ -73,8 +73,18 @@ func setupLogger(module *memmod.Module) error {
 	return nil
 }
 
+// errnoErr returns e, the last error of a failed DLL call, or syscall.EINVAL if the DLL set none, as mkwinsyscall does.
+func errnoErr(e syscall.Errno) error {
+	if e == 0 {
+		return syscall.EINVAL
+	}
+	return e
+}
+
 func closeAdapter(wintun *Adapter) {
-	syscall.Syscall(procWintunCloseAdapter.Addr(), 1, wintun.handle, 0, 0)
+	if addr, err := procWintunCloseAdapter.address(); err == nil {
+		syscall.Syscall(addr, 1, wintun.handle, 0, 0)
+	}
 }
 
 // CreateAdapter creates a Wintun adapter. name is the cosmetic name of the adapter.
@@ -93,12 +103,13 @@ func CreateAdapter(name string, tunnelType string, requestedGUID *windows.GUID) 
 	if err != nil {
 		return
 	}
-	if err := procWintunCreateAdapter.Find(); err != nil {
+	addr, err := procWintunCreateAdapter.address()
+	if err != nil {
 		return nil, err
 	}
-	r0, _, e1 := syscall.Syscall(procWintunCreateAdapter.Addr(), 3, uintptr(unsafe.Pointer(name16)), uintptr(unsafe.Pointer(tunnelType16)), uintptr(unsafe.Pointer(requestedGUID)))
+	r0, _, e1 := syscall.Syscall(addr, 3, uintptr(unsafe.Pointer(name16)), uintptr(unsafe.Pointer(tunnelType16)), uintptr(unsafe.Pointer(requestedGUID)))
 	if r0 == 0 {
-		err = e1
+		err = errnoErr(e1)
 		return
 	}
 	wintun = &Adapter{handle: r0}
@@ -113,12 +124,13 @@ func OpenAdapter(name string) (wintun *Adapter, err error) {
 	if err != nil {
 		return
 	}
-	if err := procWintunOpenAdapter.Find(); err != nil {
+	addr, err := procWintunOpenAdapter.address()
+	if err != nil {
 		return nil, err
 	}
-	r0, _, e1 := syscall.Syscall(procWintunOpenAdapter.Addr(), 1, uintptr(unsafe.Pointer(name16)), 0, 0)
+	r0, _, e1 := syscall.Syscall(addr, 1, uintptr(unsafe.Pointer(name16)), 0, 0)
 	if r0 == 0 {
-		err = e1
+		err = errnoErr(e1)
 		return
 	}
 	wintun = &Adapter{handle: r0}
@@ -128,45 +140,50 @@ func OpenAdapter(name string) (wintun *Adapter, err error) {
 
 // Close closes a Wintun adapter.
 func (wintun *Adapter) Close() (err error) {
-	if err := procWintunCloseAdapter.Find(); err != nil {
+	addr, err := procWintunCloseAdapter.address()
+	if err != nil {
 		return err
 	}
 	runtime.SetFinalizer(wintun, nil)
-	r1, _, e1 := syscall.Syscall(procWintunCloseAdapter.Addr(), 1, wintun.handle, 0, 0)
-	if r1 == 0 {
-		err = e1
-	}
-	return
+	// WintunCloseAdapter returns nothing, so no error can be derived from it.
+	syscall.Syscall(addr, 1, wintun.handle, 0, 0)
+	return nil
 }
 
 // Uninstall removes the driver from the system if no drivers are currently in use.
 func Uninstall() (err error) {
-	if err := procWintunDeleteDriver.Find(); err != nil {
+	addr, err := procWintunDeleteDriver.address()
+	if err != nil {
 		return err
 	}
-	r1, _, e1 := syscall.Syscall(procWintunDeleteDriver.Addr(), 0, 0, 0, 0)
+	r1, _, e1 := syscall.Syscall(addr, 0, 0, 0, 0)
 	if r1 == 0 {
-		err = e1
+		err = errnoErr(e1)
 	}
 	return
 }
 
 // RunningVersion returns the version of the loaded driver.
 func RunningVersion() (version uint32, err error) {
-	if err := procWintunGetRunningDriverVersion.Find(); err != nil {
+	addr, err := procWintunGetRunningDriverVersion.address()
+	if err != nil {
 		return 0, err
 	}
-	r0, _, e1 := syscall.Syscall(procWintunGetRunningDriverVersion.Addr(), 0, 0, 0, 0)
+	r0, _, e1 := syscall.Syscall(addr, 0, 0, 0, 0)
 	version = uint32(r0)
 	if version == 0 {
-		err = e1
+		err = errnoErr(e1)
 	}
 	return
 }
 
 // LUID returns the LUID of the adapter.
 func (wintun *Adapter) LUID() (luid uint64) {
-	syscall.Syscall(procWintunGetAdapterLUID.Addr(), 2, uintptr(wintun.handle), uintptr(unsafe.Pointer(&luid)), 0)
+	addr, err := procWintunGetAdapterLUID.address()
+	if err != nil {
+		return 0
+	}
+	syscall.Syscall(addr, 2, uintptr(wintun.handle), uintptr(unsafe.Pointer(&luid)), 0)
 	return
 }
 

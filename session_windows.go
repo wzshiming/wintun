@@ -45,12 +45,13 @@ func ringPointer(r uintptr) *byte {
 }
 
 func (wintun *Adapter) StartSession(capacity uint32) (session Session, err error) {
-	if err := procWintunStartSession.Find(); err != nil {
+	addr, err := procWintunStartSession.address()
+	if err != nil {
 		return Session{}, err
 	}
-	r0, _, e1 := syscall.Syscall(procWintunStartSession.Addr(), 2, uintptr(wintun.handle), uintptr(capacity), 0)
+	r0, _, e1 := syscall.Syscall(addr, 2, uintptr(wintun.handle), uintptr(capacity), 0)
 	if r0 == 0 {
-		err = e1
+		err = errnoErr(e1)
 	} else {
 		session = Session{r0}
 	}
@@ -58,24 +59,30 @@ func (wintun *Adapter) StartSession(capacity uint32) (session Session, err error
 }
 
 func (session Session) End() {
-	syscall.Syscall(procWintunEndSession.Addr(), 1, session.handle, 0, 0)
-	session.handle = 0
+	if addr, err := procWintunEndSession.address(); err == nil {
+		syscall.Syscall(addr, 1, session.handle, 0, 0)
+	}
 }
 
 func (session Session) ReadWaitEvent() (handle windows.Handle) {
-	r0, _, _ := syscall.Syscall(procWintunGetReadWaitEvent.Addr(), 1, session.handle, 0, 0)
+	addr, err := procWintunGetReadWaitEvent.address()
+	if err != nil {
+		return 0
+	}
+	r0, _, _ := syscall.Syscall(addr, 1, session.handle, 0, 0)
 	handle = windows.Handle(r0)
 	return
 }
 
 func (session Session) ReceivePacket() (packet []byte, err error) {
-	if err := procWintunReceivePacket.Find(); err != nil {
+	addr, err := procWintunReceivePacket.address()
+	if err != nil {
 		return nil, err
 	}
 	var packetSize uint32
-	r0, _, e1 := syscall.Syscall(procWintunReceivePacket.Addr(), 2, session.handle, uintptr(unsafe.Pointer(&packetSize)), 0)
+	r0, _, e1 := syscall.Syscall(addr, 2, session.handle, uintptr(unsafe.Pointer(&packetSize)), 0)
 	if r0 == 0 {
-		err = e1
+		err = errnoErr(e1)
 		return
 	}
 	packet = unsafe.Slice(ringPointer(r0), packetSize)
@@ -83,16 +90,19 @@ func (session Session) ReceivePacket() (packet []byte, err error) {
 }
 
 func (session Session) ReleaseReceivePacket(packet []byte) {
-	syscall.Syscall(procWintunReleaseReceivePacket.Addr(), 2, session.handle, uintptr(unsafe.Pointer(&packet[0])), 0)
+	if addr, err := procWintunReleaseReceivePacket.address(); err == nil {
+		syscall.Syscall(addr, 2, session.handle, uintptr(unsafe.Pointer(&packet[0])), 0)
+	}
 }
 
 func (session Session) AllocateSendPacket(packetSize int) (packet []byte, err error) {
-	if err := procWintunAllocateSendPacket.Find(); err != nil {
+	addr, err := procWintunAllocateSendPacket.address()
+	if err != nil {
 		return nil, err
 	}
-	r0, _, e1 := syscall.Syscall(procWintunAllocateSendPacket.Addr(), 2, session.handle, uintptr(packetSize), 0)
+	r0, _, e1 := syscall.Syscall(addr, 2, session.handle, uintptr(packetSize), 0)
 	if r0 == 0 {
-		err = e1
+		err = errnoErr(e1)
 		return
 	}
 	packet = unsafe.Slice(ringPointer(r0), packetSize)
@@ -100,5 +110,7 @@ func (session Session) AllocateSendPacket(packetSize int) (packet []byte, err er
 }
 
 func (session Session) SendPacket(packet []byte) {
-	syscall.Syscall(procWintunSendPacket.Addr(), 2, session.handle, uintptr(unsafe.Pointer(&packet[0])), 0)
+	if addr, err := procWintunSendPacket.address(); err == nil {
+		syscall.Syscall(addr, 2, session.handle, uintptr(unsafe.Pointer(&packet[0])), 0)
+	}
 }

@@ -53,13 +53,12 @@ func (p *lazyProc) Find() error {
 	return nil
 }
 
-// Addr panics if Find fails; only functions that return no error use it, once a successful Find made them reachable.
-func (p *lazyProc) Addr() uintptr {
-	err := p.Find()
-	if err != nil {
-		panic(err)
+// address returns the address of the proc, loading the DLL first if need be.
+func (p *lazyProc) address() (uintptr, error) {
+	if err := p.Find(); err != nil {
+		return 0, err
 	}
-	return p.addr.Load()
+	return p.addr.Load(), nil
 }
 
 // lazyDLL loads the DLL image data from memory with memmod on first use and never frees it.

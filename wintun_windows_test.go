@@ -3,10 +3,12 @@ package wintun
 import (
 	"bytes"
 	"debug/pe"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"slices"
 	"testing"
 	"unsafe"
@@ -77,6 +79,95 @@ func TestLazyHelper(t *testing.T) {
 
 func TestPackageInitAndVersionLoadNothing(t *testing.T) {
 	ttRunHelper(t, "TestLazyHelper")
+}
+
+// ttAdapter and ttSession return an Adapter and a Session holding handle, which no DLL returned.
+func ttAdapter(handle uintptr) *Adapter { return &Adapter{handle: handle} }
+func ttSession(handle uintptr) Session  { return Session{handle: handle} }
+
+func TestInvalidImageHelper(t *testing.T) {
+	if os.Getenv(ttHelperEnv) != "1" {
+		t.Skip("run by TestEveryEntryReturnsAnErrorForAnInvalidImage")
+	}
+	modwintun.data = []byte("not a PE image")
+	adapter, session := ttAdapter(1), ttSession(1)
+	for i := range 2 {
+		_, createErr := CreateAdapter("WintunTest", "WintunTest", nil)
+		_, openErr := OpenAdapter("WintunTest")
+		_, versionErr := RunningVersion()
+		_, startErr := adapter.StartSession(RingCapacityMin)
+		_, receiveErr := session.ReceivePacket()
+		_, allocateErr := session.AllocateSendPacket(1)
+		for name, err := range map[string]error{
+			"CreateAdapter": createErr, "OpenAdapter": openErr, "Uninstall": Uninstall(), "RunningVersion": versionErr,
+			"Close": adapter.Close(), "StartSession": startErr, "ReceivePacket": receiveErr, "AllocateSendPacket": allocateErr,
+		} {
+			if err == nil {
+				t.Errorf("call #%d: %s = nil for an invalid image, want an error", i+1, name)
+			}
+		}
+		if luid := adapter.LUID(); luid != 0 {
+			t.Errorf("call #%d: LUID = %#x for an invalid image, want 0", i+1, luid)
+		}
+		if event := session.ReadWaitEvent(); event != 0 {
+			t.Errorf("call #%d: ReadWaitEvent = %#x for an invalid image, want 0", i+1, event)
+		}
+		session.ReleaseReceivePacket(make([]byte, 1))
+		session.SendPacket(make([]byte, 1))
+		session.End()
+	}
+	if modwintun.module.Load() != nil {
+		t.Error("an invalid image left a module behind")
+	}
+	modwintun.data = dll
+	if err := procWintunGetRunningDriverVersion.Find(); err != nil {
+		t.Errorf("Find after the image was fixed = %v, want the failed load retried", err)
+	}
+}
+
+func TestEveryEntryReturnsAnErrorForAnInvalidImage(t *testing.T) {
+	ttRunHelper(t, "TestInvalidImageHelper")
+}
+
+var procSetLastError = windows.NewLazySystemDLL("kernel32.dll").NewProc("SetLastError")
+
+// ttFail returns 0 with no last error, as a failing DLL function that sets none would.
+func ttFail() uintptr {
+	procSetLastError.Call(0)
+	return 0
+}
+
+// ttStub makes p call fn, a callback for windows.NewCallback, until the test ends.
+func ttStub(t *testing.T, p *lazyProc, fn any) {
+	t.Helper()
+	old := p.addr.Load()
+	p.addr.Store(windows.NewCallback(fn))
+	t.Cleanup(func() { p.addr.Store(old) })
+}
+
+func TestDLLFailureWithoutALastErrorIsEINVAL(t *testing.T) {
+	ttStub(t, procWintunCreateAdapter, func(_, _, _ uintptr) uintptr { return ttFail() })
+	ttStub(t, procWintunOpenAdapter, func(uintptr) uintptr { return ttFail() })
+	ttStub(t, procWintunDeleteDriver, func() uintptr { return ttFail() })
+	ttStub(t, procWintunGetRunningDriverVersion, func() uintptr { return ttFail() })
+	ttStub(t, procWintunStartSession, func(_, _ uintptr) uintptr { return ttFail() })
+	ttStub(t, procWintunReceivePacket, func(_, _ uintptr) uintptr { return ttFail() })
+	ttStub(t, procWintunAllocateSendPacket, func(_, _ uintptr) uintptr { return ttFail() })
+	adapter, session := ttAdapter(1), ttSession(1)
+	_, createErr := CreateAdapter("WintunTest", "WintunTest", nil)
+	_, openErr := OpenAdapter("WintunTest")
+	_, versionErr := RunningVersion()
+	_, startErr := adapter.StartSession(RingCapacityMin)
+	_, receiveErr := session.ReceivePacket()
+	_, allocateErr := session.AllocateSendPacket(1)
+	for name, err := range map[string]error{
+		"CreateAdapter": createErr, "OpenAdapter": openErr, "Uninstall": Uninstall(), "RunningVersion": versionErr,
+		"StartSession": startErr, "ReceivePacket": receiveErr, "AllocateSendPacket": allocateErr,
+	} {
+		if err == nil || errors.Is(err, windows.ERROR_SUCCESS) || !errors.Is(err, syscall.EINVAL) {
+			t.Errorf("%s = %v when the DLL fails without a last error, want EINVAL", name, err)
+		}
+	}
 }
 
 func TestRunningVersionResolvesFromAModuleOutsideTheLoaderList(t *testing.T) {
