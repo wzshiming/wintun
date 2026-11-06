@@ -50,3 +50,45 @@ jobs:
           git status --porcelain
           git diff --stat --exit-code
           test -z "$(git status --porcelain)"
+
+  # Each DLL runs on every Windows it supports: natively, under WOW64 on amd64 and under emulation on arm64.
+  e2e:
+    name: e2e (${{ matrix.os }}, ${{ matrix.goarch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, goarch: amd64, race: -race }
+          - { os: windows-latest, goarch: '386' }
+          - { os: windows-11-arm, goarch: arm64 }
+          - { os: windows-11-arm, goarch: amd64 }
+          - { os: windows-11-arm, goarch: '386' }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      GOARCH: ${{ matrix.goarch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Test
+        shell: bash
+        run: go test ./... -count=1 ${{ matrix.race }}
+      - name: Build the e2e test binary
+        shell: bash
+        run: go test -c ${{ matrix.race }} -o "$RUNNER_TEMP/wintun-e2e.test.exe" ./e2e
+      # The run fails unless every test reports PASS, so a test skipped by mistake cannot go unnoticed.
+      - name: E2E
+        shell: bash
+        run: |
+          WINTUN_E2E=1 "$RUNNER_TEMP/wintun-e2e.test.exe" -test.v -test.timeout 5m | tee "$RUNNER_TEMP/wintun-e2e.log"
+          for t in TestE2ELoad TestE2ESignature TestE2EAdapter; do
+            grep -qF -- "--- PASS: $t (" "$RUNNER_TEMP/wintun-e2e.log" || { echo "$t did not pass"; exit 1; }
+          done
+      - name: Network state
+        if: failure()
+        shell: powershell
+        run: |
+          Get-NetAdapter -IncludeHidden | Format-Table -AutoSize Name, InterfaceDescription, Status, ifIndex
+          ipconfig /all

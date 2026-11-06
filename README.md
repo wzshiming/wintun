@@ -51,7 +51,21 @@ The DLLs are the unmodified builds of Wintun 0.14.1, signed by WireGuard LLC, fr
 1. Take the new version and the SHA-256 of its zip from <https://www.wintun.net>.
 2. Put both on the `//go:generate` line in [generate.go](generate.go) and run `go generate`. It downloads the zip, checks its SHA-256, writes the DLLs, `bin/LICENSE.txt` and [version.go](version.go), and prints the SHA-256 of each file it wrote.
 3. Update this section with the version and the hashes; `go test` fails until the table matches the DLLs.
-4. Read the new `bin/LICENSE.txt` for changed terms.
+4. Read the new `bin/LICENSE.txt` for changed terms; CI then runs the end-to-end tests with each new DLL.
+
+## End-to-end tests
+
+The end-to-end tests in [`./e2e`](e2e) load the real `wintun.dll` on Windows. Every test skips unless `WINTUN_E2E=1`.
+
+```sh
+WINTUN_E2E=1 go test ./e2e -v
+```
+
+- `TestE2ELoad`: `Load` loads the DLL from under `CacheDir()`, every function of `wintun.h` resolves in it, and `golang.zx2c4.com/wintun` finds it by its base name and reads its version, `Version`.
+- `TestE2ESignature`: `WinVerifyTrust` trusts the Authenticode signature of the extracted DLL.
+- `TestE2EAdapter` needs an elevated process: it creates an adapter with the requested name and GUID, checks the running driver is the DLL's, assigns it 198.18.0.5/30, has the session read a UDP datagram the host sends to 198.18.0.6 and write back one that the sending socket receives, and removes the adapter.
+
+CI fails unless all three pass on `windows-latest` with amd64 (`-race`) and 386 under WOW64, and on `windows-11-arm` with arm64 and with amd64 and 386 under emulation, so each DLL runs on every Windows it supports.
 
 ## License
 
