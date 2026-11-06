@@ -47,18 +47,24 @@ func echo() error {
 
 The first call of any Wintun function loads the embedded DLL once, with [memmod](https://pkg.go.dev/golang.zx2c4.com/wireguard/windows/driver/memmod), and keeps it for the life of the process; memmod resolves its imports from System32 only. Creating an adapter or removing the driver needs an elevated process.
 
+The deferred `End` and `Close` are safe even if they already ran: both may be called more than once, also concurrently, and hand their handle to the DLL once. After `End`, `ReceivePacket` and `AllocateSendPacket` return `windows.ERROR_HANDLE_EOF`, the code the driver itself uses for an ended session, so a receive loop needs one check. As the driver requires, stop readers before `End`: set the `ReadWaitEvent` event and wait for them.
+
 The in-memory module is not in the Windows loader's list, so another binding in the same process that loads `wintun.dll` by name, such as `golang.zx2c4.com/wintun`, cannot find it: it still looks for a `wintun.dll` file.
 
 ## API
 
-The package exports nothing outside Windows. On Windows it exports exactly the API of `golang.zx2c4.com/wintun` v0.0.0-20230126152724-0fa3db229ce2, with the same names and signatures:
+The package exports nothing outside Windows. On Windows it exports the API of `golang.zx2c4.com/wintun` v0.0.0-20230126152724-0fa3db229ce2, with the same names and signatures, except that `StartSession` returns a `*Session` and `Session`'s methods have pointer receivers:
 
-- `type Adapter`, `const AdapterNameMax`, `func CreateAdapter(name string, tunnelType string, requestedGUID *windows.GUID) (*Adapter, error)`, `func OpenAdapter(name string) (*Adapter, error)`, and the methods `Close() error`, `LUID() uint64` and `StartSession(capacity uint32) (Session, error)`.
+- `type Adapter`, `const AdapterNameMax`, `func CreateAdapter(name string, tunnelType string, requestedGUID *windows.GUID) (*Adapter, error)`, `func OpenAdapter(name string) (*Adapter, error)`, and the methods `Close() error`, `LUID() uint64` and `StartSession(capacity uint32) (*Session, error)`.
 - `type Session` with `End()`, `ReadWaitEvent() windows.Handle`, `ReceivePacket() ([]byte, error)`, `ReleaseReceivePacket([]byte)`, `AllocateSendPacket(int) ([]byte, error)` and `SendPacket([]byte)`; `type Packet`, `const PacketSizeMax`, `RingCapacityMin` and `RingCapacityMax`.
 - `func Uninstall() error`, `func RunningVersion() (uint32, error)`, and `type TimestampedWriter`, which the DLL's log messages go to when it is the writer of the standard logger.
 - `func Version() string` returns the Wintun version of the embedded DLL, 0.14.1, without loading it.
 
-Unlike `golang.zx2c4.com/wintun`, which panics when the DLL cannot load or lacks an export, every function with an error result returns that failure; the others are reached only through an `Adapter` or a `Session`, after a successful load.
+Unlike `golang.zx2c4.com/wintun`, which panics when the DLL cannot load or lacks an export, nothing here panics: every function with an error result returns that failure, a zero or nil receiver gets the closed results below without loading the DLL, and a DLL call that fails without a last error returns `syscall.EINVAL`; when the DLL cannot load, `LUID` returns 0 and `ReadWaitEvent` 0. A dead handle never reaches the DLL:
+
+- A closed, zero or nil `Adapter`'s `Close` returns nil, `LUID` 0 and `StartSession` `windows.ERROR_INVALID_HANDLE`.
+- An ended, zero or nil `Session`'s `ReceivePacket` and `AllocateSendPacket` return `windows.ERROR_HANDLE_EOF`, `ReadWaitEvent` 0, and `ReleaseReceivePacket` and `SendPacket` do nothing, as they do for a nil packet.
+- `AllocateSendPacket` returns `windows.ERROR_INVALID_PARAMETER` for a size outside 0 to `PacketSizeMax` without calling the DLL, and a packet of exactly that size otherwise.
 
 ## Embedded DLLs
 
