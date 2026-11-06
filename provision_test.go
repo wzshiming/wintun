@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -190,6 +191,21 @@ func TestProvisionFileRefusesALinkedFileEvenWithTheRightContent(t *testing.T) {
 	}
 	if _, err := provisionFile(root, nil, "x.dll", []byte("payload"), ttProvisionNoSymlink); err == nil {
 		t.Error("provisionFile over a linked file = nil error, want one")
+	}
+}
+
+func TestProvisionFileErrorsCarryNoPackagePrefix(t *testing.T) {
+	root := t.TempDir()
+	// A file where the directory goes makes writing below it fail.
+	if err := os.WriteFile(filepath.Join(root, "a"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := provisionFile(root, []string{"a"}, "x.dll", []byte("payload"), ttProvisionNoCheck)
+	if err == nil {
+		t.Fatal("provisionFile below a file = nil error, want one")
+	}
+	if strings.Contains(err.Error(), "wintun: ") {
+		t.Errorf("provisionFile = %q, want no \"wintun: \", which only Load adds", err)
 	}
 }
 

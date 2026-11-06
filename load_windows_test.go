@@ -238,3 +238,39 @@ func TestLoadConcurrentCallsAllSucceed(t *testing.T) {
 	}
 	ttWintunWantLoaded(t, *loaded, path)
 }
+
+func TestLoadErrorsCarryOnePrefix(t *testing.T) {
+	for name, setup := range map[string]func(t *testing.T, l *loader, path string){
+		"cache directory": func(t *testing.T, l *loader, path string) {
+			l.cacheDir = func() (string, error) { return "", errors.New("tt: no cache directory") }
+		},
+		"reparse point": func(t *testing.T, l *loader, path string) {
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			ttWintunJunction(t, path, t.TempDir())
+		},
+		"changed content": func(t *testing.T, l *loader, path string) {
+			l.beforeOpen = func(path string) {
+				if err := os.WriteFile(path, []byte("swapped"), 0o644); err != nil {
+					t.Errorf("swap %s: %v", path, err)
+				}
+			}
+		},
+		"LoadLibrary": func(t *testing.T, l *loader, path string) {
+			l.loadLibrary = func(string) (windows.Handle, error) { return 0, errors.New("tt: LoadLibrary failed") }
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l, path, _ := ttWintunUse(t, t.TempDir())
+			setup(t, l, path)
+			err := l.load()
+			if err == nil {
+				t.Fatal("Load = nil, want an error")
+			}
+			if msg := err.Error(); !strings.HasPrefix(msg, "wintun: ") || strings.Count(msg, "wintun: ") != 1 {
+				t.Errorf("Load = %q, want it to start with its only \"wintun: \"", msg)
+			}
+		})
+	}
+}

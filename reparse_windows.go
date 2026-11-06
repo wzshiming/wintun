@@ -20,7 +20,7 @@ func rejectReparsePoint(path string) error {
 		return err
 	}
 	if a, ok := fi.Sys().(*syscall.Win32FileAttributeData); !ok || a.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-		return fmt.Errorf("wintun: %s is a reparse point", path)
+		return fmt.Errorf("%s is a reparse point", path)
 	}
 	return nil
 }
