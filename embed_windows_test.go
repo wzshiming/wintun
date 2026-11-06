@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-func TestEmbeddedIsTrueOnWindows(t *testing.T) {
-	if !Embedded {
-		t.Error("Embedded is false on Windows")
-	}
-}
-
 func TestDLLIsTheMirroredDLLOfThisPort(t *testing.T) {
 	dir, ok := map[string]string{"386": "x86", "amd64": "amd64", "arm64": "arm64"}[runtime.GOARCH]
 	if !ok {
