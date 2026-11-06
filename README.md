@@ -1,6 +1,6 @@
 # wintun
 
-`github.com/wzshiming/wintun` embeds the signed [Wintun](https://www.wintun.net) DLL for every Windows architecture Go supports and loads it, so a program needs no `wintun.dll` beside its executable. [`golang.zx2c4.com/wintun`](https://pkg.go.dev/golang.zx2c4.com/wintun) and [`golang.zx2c4.com/wireguard/tun`](https://pkg.go.dev/golang.zx2c4.com/wireguard/tun) then use the DLL it loaded.
+`github.com/wzshiming/wintun` is a [Wintun](https://www.wintun.net) binding for Go with the API of [`golang.zx2c4.com/wintun`](https://pkg.go.dev/golang.zx2c4.com/wintun) that embeds the signed `wintun.dll` for every Windows architecture Go supports and loads it straight from memory, as wireguard-windows' `load_wgnt_from_rsrc` build does: a program needs no `wintun.dll` beside its executable, and nothing is written to disk.
 
 ## Install
 
@@ -11,25 +11,49 @@ go get github.com/wzshiming/wintun
 ## Usage
 
 ```go
-func open() (tun.Device, error) { // golang.zx2c4.com/wireguard/tun
-	// Load before golang.zx2c4.com/wintun first looks for wintun.dll.
-	if err := wintun.Load(); err != nil {
-		return nil, err
+func echo() error {
+	adapter, err := wintun.CreateAdapter("wg0", "Wintun", nil)
+	if err != nil {
+		return err
 	}
-	return tun.CreateTUN("wg0", 1420)
+	defer adapter.Close()
+	session, err := adapter.StartSession(wintun.RingCapacityMin)
+	if err != nil {
+		return err
+	}
+	defer session.End()
+	for {
+		packet, err := session.ReceivePacket()
+		if err == windows.ERROR_NO_MORE_ITEMS {
+			windows.WaitForSingleObject(session.ReadWaitEvent(), windows.INFINITE)
+			continue
+		} else if err != nil {
+			return err
+		}
+		reply, err := session.AllocateSendPacket(len(packet))
+		if err == nil {
+			copy(reply, packet)
+			session.SendPacket(reply)
+		}
+		session.ReleaseReceivePacket(packet)
+	}
 }
 ```
 
-`Load` needs no privileges; creating an adapter needs an elevated process.
+The first call of any Wintun function loads the embedded DLL once, with [memmod](https://pkg.go.dev/golang.zx2c4.com/wireguard/windows/driver/memmod), and keeps it for the life of the process; memmod resolves its imports from System32 only. Creating an adapter or removing the driver needs an elevated process.
+
+The in-memory module is not in the Windows loader's list, so neither `golang.zx2c4.com/wintun` nor wireguard-go's `tun.CreateTUN` in the same process can find it: they still look for a `wintun.dll` file.
 
 ## API
 
-- `const Version = "0.14.1"` — the Wintun version of the embedded DLLs.
-- `const Embedded bool` — whether this build carries a `wintun.dll`: true on Windows (386, amd64 and arm64), false elsewhere.
-- `var CacheDir func() (string, error)` — the directory the embedded `wintun.dll` is extracted into on Windows, as `<GOARCH>-<hash>/wintun.dll` (default `os.UserCacheDir()/wintun`); programs may replace it.
-- `func Load() error` — on Windows, extracts the embedded `wintun.dll` under `CacheDir()`, verifies it and loads it for the life of the process; once a call succeeds later calls do nothing, and after a failure the next call tries again. Elsewhere it returns an error wrapping `errors.ErrUnsupported`. Its errors start with `wintun: `.
+The package exports nothing outside Windows. On Windows it exports exactly the API of `golang.zx2c4.com/wintun` v0.0.0-20230126152724-0fa3db229ce2, with the same names and signatures:
 
-`Load` writes the DLL to `CacheDir()/<GOARCH>-<first 16 hex digits of its SHA-256>/wintun.dll` through a temporary file, unless that file already holds it. It refuses a junction, symbolic link or other reparse point at `CacheDir()`, below it or at the DLL, which another process of the same user could aim elsewhere, while the parent of `CacheDir()` may be redirected. It then opens the file without write or delete sharing, compares it with the embedded bytes and, still holding it open, loads the final path of that handle, resolving the DLL's own imports from System32 only. `golang.zx2c4.com/wintun` loads `wintun.dll` by its base name, which Windows resolves to that module.
+- `type Adapter`, `const AdapterNameMax`, `func CreateAdapter(name string, tunnelType string, requestedGUID *windows.GUID) (*Adapter, error)`, `func OpenAdapter(name string) (*Adapter, error)`, and the methods `Close() error`, `LUID() uint64` and `StartSession(capacity uint32) (Session, error)`.
+- `type Session` with `End()`, `ReadWaitEvent() windows.Handle`, `ReceivePacket() ([]byte, error)`, `ReleaseReceivePacket([]byte)`, `AllocateSendPacket(int) ([]byte, error)` and `SendPacket([]byte)`; `type Packet`, `const PacketSizeMax`, `RingCapacityMin` and `RingCapacityMax`.
+- `func Uninstall() error`, `func RunningVersion() (uint32, error)`, and `type TimestampedWriter`, which the DLL's log messages go to when it is the writer of the standard logger.
+- `func Version() string` returns the Wintun version of the embedded DLL, 0.14.1, without loading it.
+
+Unlike `golang.zx2c4.com/wintun`, which panics when the DLL cannot load or lacks an export, every function with an error result returns that failure; the others are reached only through an `Adapter` or a `Session`, after a successful load.
 
 ## Embedded DLLs
 
