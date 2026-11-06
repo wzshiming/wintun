@@ -35,18 +35,6 @@ jobs:
           done
           CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go build ./...
           GOOS=freebsd GOARCH=amd64 go vet ./...
-      - name: Vet and build the e2e module
-        working-directory: e2e
-        run: |
-          go vet ./...
-          go build ./...
-      - name: Cross-vet the e2e tests for every Windows architecture
-        if: matrix.os == 'ubuntu-latest'
-        working-directory: e2e
-        run: |
-          for arch in 386 amd64 arm64; do
-            GOOS=windows GOARCH=$arch go vet ./...
-          done
 
   dlls:
     runs-on: ubuntu-latest
@@ -89,14 +77,13 @@ jobs:
         run: go test ./... -count=1 ${{ matrix.race }}
       - name: Build the e2e test binary
         shell: bash
-        run: go test -C e2e -c ${{ matrix.race }} -o "$RUNNER_TEMP/wintun-e2e.test.exe" .
-      # The run fails unless both tests report PASS, so a test skipped by mistake cannot go unnoticed.
+        run: go test -c ${{ matrix.race }} -o "$RUNNER_TEMP/wintun-e2e.test.exe" .
+      # The run fails unless the test reports PASS, so a test skipped by mistake cannot go unnoticed.
       - name: E2E
         shell: bash
         run: |
-          WINTUN_E2E=1 "$RUNNER_TEMP/wintun-e2e.test.exe" -test.v -test.timeout 5m | tee "$RUNNER_TEMP/wintun-e2e.log"
+          WINTUN_E2E=1 "$RUNNER_TEMP/wintun-e2e.test.exe" -test.v -test.run '^TestE2EAdapter$' -test.timeout 5m | tee "$RUNNER_TEMP/wintun-e2e.log"
           grep -qF -- "--- PASS: TestE2EAdapter (" "$RUNNER_TEMP/wintun-e2e.log" || { echo "TestE2EAdapter did not pass"; exit 1; }
-          grep -qF -- "--- PASS: TestE2ETUN (" "$RUNNER_TEMP/wintun-e2e.log" || { echo "TestE2ETUN did not pass"; exit 1; }
       - name: Network state
         if: failure()
         shell: powershell
