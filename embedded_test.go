@@ -8,6 +8,7 @@ import (
 	"encoding/asn1"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"io/fs"
 	"math/big"
 	"os"
@@ -99,25 +100,85 @@ func ttSigner(t *testing.T, f *pe.File, data []byte) *x509.Certificate {
 	return nil
 }
 
-func TestEmbeddedHoldsOnlyTheLicenseAndADLLPerReleaseDirectory(t *testing.T) {
+// ttEmbeddedLayoutError reports how the tree under root differs from the embedded payload's layout,
+// ignoring entries named with a leading dot, such as the gitignored .DS_Store.
+func ttEmbeddedLayoutError(root string) error {
 	var got []string
-	err := filepath.WalkDir("embedded", func(path string, d fs.DirEntry, err error) error {
-		if err == nil && !d.IsDir() {
-			rel, _ := filepath.Rel("embedded", path)
-			got = append(got, filepath.ToSlash(rel))
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || path == root {
+			return err
 		}
+		if strings.HasPrefix(d.Name(), ".") {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		got = append(got, filepath.ToSlash(rel))
 		return err
 	})
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
-	want := []string{"LICENSE.txt"}
+	want := []string{"LICENSE.txt", "bin"}
 	for dir := range ttMachines {
-		want = append(want, "bin/"+dir+"/wintun.dll")
+		want = append(want, "bin/"+dir, "bin/"+dir+"/wintun.dll")
 	}
 	slices.Sort(got)
 	if slices.Sort(want); !slices.Equal(got, want) {
-		t.Errorf("embedded holds %q, want %q", got, want)
+		return fmt.Errorf("embedded holds %q, want %q", got, want)
+	}
+	return nil
+}
+
+func TestEmbeddedHoldsOnlyTheLicenseAndADLLPerReleaseDirectory(t *testing.T) {
+	if err := ttEmbeddedLayoutError("embedded"); err != nil {
+		t.Error(err)
+	}
+}
+
+// ttLayoutDir returns a temp directory holding the expected embedded files, plus extra, minus missing.
+func ttLayoutDir(t *testing.T, extra []string, missing string) string {
+	t.Helper()
+	root := t.TempDir()
+	names := []string{"LICENSE.txt"}
+	for dir := range ttMachines {
+		names = append(names, "bin/"+dir+"/wintun.dll")
+	}
+	for _, name := range append(names, extra...) {
+		if name == missing {
+			continue
+		}
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+func TestEmbeddedLayoutIgnoresDotFiles(t *testing.T) {
+	root := ttLayoutDir(t, []string{".DS_Store", "bin/.DS_Store", "bin/amd64/.DS_Store"}, "")
+	if err := ttEmbeddedLayoutError(root); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestEmbeddedLayoutRejectsAnExtraFile(t *testing.T) {
+	root := ttLayoutDir(t, []string{"foo.txt"}, "")
+	if err := ttEmbeddedLayoutError(root); err == nil || !strings.Contains(err.Error(), `"foo.txt"`) {
+		t.Errorf("got %v, want an error naming foo.txt", err)
+	}
+}
+
+func TestEmbeddedLayoutRejectsAMissingDLL(t *testing.T) {
+	root := ttLayoutDir(t, nil, "bin/arm64/wintun.dll")
+	if err := ttEmbeddedLayoutError(root); err == nil || !strings.Contains(err.Error(), `"bin/arm64/wintun.dll"`) {
+		t.Errorf("got %v, want an error naming bin/arm64/wintun.dll", err)
 	}
 }
 
