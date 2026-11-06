@@ -6,22 +6,12 @@
 package wintun
 
 import (
-	"log"
 	"runtime"
 	"sync/atomic"
 	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
-	"golang.zx2c4.com/wireguard/windows/driver/memmod"
-)
-
-type loggerLevel int
-
-const (
-	logInfo loggerLevel = iota
-	logWarn
-	logErr
 )
 
 const AdapterNameMax = 128
@@ -47,40 +37,6 @@ var (
 	procWintunGetAdapterLUID          = modwintun.NewProc("WintunGetAdapterLUID")
 	procWintunGetRunningDriverVersion = modwintun.NewProc("WintunGetRunningDriverVersion")
 )
-
-type TimestampedWriter interface {
-	WriteWithTimestamp(p []byte, ts int64) (n int, err error)
-}
-
-func logMessage(level loggerLevel, timestamp uint64, msg *uint16) int {
-	if tw, ok := log.Default().Writer().(TimestampedWriter); ok {
-		tw.WriteWithTimestamp([]byte(log.Default().Prefix()+windows.UTF16PtrToString(msg)), (int64(timestamp)-116444736000000000)*100)
-	} else {
-		log.Println(windows.UTF16PtrToString(msg))
-	}
-	return 0
-}
-
-func setupLogger(module *memmod.Module) error {
-	setLogger, err := module.ProcAddressByName("WintunSetLogger")
-	if err != nil {
-		return err
-	}
-	var callback uintptr
-	if runtime.GOARCH == "386" {
-		callback = windows.NewCallback(func(level loggerLevel, timestampLow, timestampHigh uint32, msg *uint16) int {
-			return logMessage(level, uint64(timestampHigh)<<32|uint64(timestampLow), msg)
-		})
-	} else if runtime.GOARCH == "arm" {
-		callback = windows.NewCallback(func(level loggerLevel, _, timestampLow, timestampHigh uint32, msg *uint16) int {
-			return logMessage(level, uint64(timestampHigh)<<32|uint64(timestampLow), msg)
-		})
-	} else if runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64" {
-		callback = windows.NewCallback(logMessage)
-	}
-	syscall.Syscall(setLogger, 1, callback, 0, 0)
-	return nil
-}
 
 // errnoErr returns e, the last error of a failed DLL call, or syscall.EINVAL if the DLL set none, as mkwinsyscall does.
 func errnoErr(e syscall.Errno) error {
