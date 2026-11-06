@@ -16,22 +16,22 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// The exported API of golang.zx2c4.com/wintun, pinned at compile time.
+// The exported API of golang.zx2c4.com/wintun, pinned at compile time, but with a *Session.
 var (
 	_ func(string, string, *windows.GUID) (*Adapter, error) = CreateAdapter
 	_ func(string) (*Adapter, error)                        = OpenAdapter
 	_ func(*Adapter) error                                  = (*Adapter).Close
 	_ func(*Adapter) uint64                                 = (*Adapter).LUID
-	_ func(*Adapter, uint32) (Session, error)               = (*Adapter).StartSession
+	_ func(*Adapter, uint32) (*Session, error)              = (*Adapter).StartSession
 	_ func() error                                          = Uninstall
 	_ func() (uint32, error)                                = RunningVersion
 	_ func() string                                         = Version
-	_ func(Session)                                         = Session.End
-	_ func(Session) windows.Handle                          = Session.ReadWaitEvent
-	_ func(Session) ([]byte, error)                         = Session.ReceivePacket
-	_ func(Session, []byte)                                 = Session.ReleaseReceivePacket
-	_ func(Session, int) ([]byte, error)                    = Session.AllocateSendPacket
-	_ func(Session, []byte)                                 = Session.SendPacket
+	_ func(*Session)                                        = (*Session).End
+	_ func(*Session) windows.Handle                         = (*Session).ReadWaitEvent
+	_ func(*Session) ([]byte, error)                        = (*Session).ReceivePacket
+	_ func(*Session, []byte)                                = (*Session).ReleaseReceivePacket
+	_ func(*Session, int) ([]byte, error)                   = (*Session).AllocateSendPacket
+	_ func(*Session, []byte)                                = (*Session).SendPacket
 	_ interface {
 		WriteWithTimestamp(p []byte, ts int64) (n int, err error)
 	} = TimestampedWriter(nil)
@@ -75,6 +75,16 @@ func TestLazyHelper(t *testing.T) {
 	if modwintun.module.Load() != nil {
 		t.Error("Version loaded wintun.dll")
 	}
+	for name, adapter := range map[string]*Adapter{"nil": nil, "zero": new(Adapter)} {
+		ttClosedAdapter(t, name, adapter)
+	}
+	for name, session := range map[string]*Session{"nil": nil, "zero": new(Session)} {
+		session.End()
+		ttEndedSession(t, name, session)
+	}
+	if modwintun.module.Load() != nil {
+		t.Error("a nil or zero Adapter or Session loaded wintun.dll")
+	}
 }
 
 func TestPackageInitAndVersionLoadNothing(t *testing.T) {
@@ -82,8 +92,17 @@ func TestPackageInitAndVersionLoadNothing(t *testing.T) {
 }
 
 // ttAdapter and ttSession return an Adapter and a Session holding handle, which no DLL returned.
-func ttAdapter(handle uintptr) *Adapter { return &Adapter{handle: handle} }
-func ttSession(handle uintptr) Session  { return Session{handle: handle} }
+func ttAdapter(handle uintptr) *Adapter {
+	adapter := new(Adapter)
+	adapter.handle.Store(handle)
+	return adapter
+}
+
+func ttSession(handle uintptr) *Session {
+	session := new(Session)
+	session.handle.Store(handle)
+	return session
+}
 
 func TestInvalidImageHelper(t *testing.T) {
 	if os.Getenv(ttHelperEnv) != "1" {

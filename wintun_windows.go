@@ -8,6 +8,7 @@ package wintun
 import (
 	"log"
 	"runtime"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 
@@ -26,7 +27,15 @@ const (
 const AdapterNameMax = 128
 
 type Adapter struct {
-	handle uintptr
+	handle atomic.Uintptr
+}
+
+// live returns the adapter's handle, or 0 for a closed, zero or nil Adapter.
+func (wintun *Adapter) live() uintptr {
+	if wintun == nil {
+		return 0
+	}
+	return wintun.handle.Load()
 }
 
 var (
@@ -82,9 +91,7 @@ func errnoErr(e syscall.Errno) error {
 }
 
 func closeAdapter(wintun *Adapter) {
-	if addr, err := procWintunCloseAdapter.address(); err == nil {
-		syscall.Syscall(addr, 1, wintun.handle, 0, 0)
-	}
+	wintun.Close()
 }
 
 // CreateAdapter creates a Wintun adapter. name is the cosmetic name of the adapter.
@@ -112,7 +119,8 @@ func CreateAdapter(name string, tunnelType string, requestedGUID *windows.GUID) 
 		err = errnoErr(e1)
 		return
 	}
-	wintun = &Adapter{handle: r0}
+	wintun = new(Adapter)
+	wintun.handle.Store(r0)
 	runtime.SetFinalizer(wintun, closeAdapter)
 	return
 }
@@ -133,20 +141,26 @@ func OpenAdapter(name string) (wintun *Adapter, err error) {
 		err = errnoErr(e1)
 		return
 	}
-	wintun = &Adapter{handle: r0}
+	wintun = new(Adapter)
+	wintun.handle.Store(r0)
 	runtime.SetFinalizer(wintun, closeAdapter)
 	return
 }
 
-// Close closes a Wintun adapter.
-func (wintun *Adapter) Close() (err error) {
+// Close closes a Wintun adapter. It hands the handle to the DLL once; later calls, and those on a nil or zero
+// Adapter, return nil.
+func (wintun *Adapter) Close() error {
+	if wintun.live() == 0 {
+		return nil
+	}
 	addr, err := procWintunCloseAdapter.address()
 	if err != nil {
 		return err
 	}
-	runtime.SetFinalizer(wintun, nil)
-	// WintunCloseAdapter returns nothing, so no error can be derived from it.
-	syscall.Syscall(addr, 1, wintun.handle, 0, 0)
+	if handle := wintun.handle.Swap(0); handle != 0 {
+		// WintunCloseAdapter returns nothing, so no error can be derived from it.
+		syscall.Syscall(addr, 1, handle, 0, 0)
+	}
 	return nil
 }
 
@@ -177,13 +191,17 @@ func RunningVersion() (version uint32, err error) {
 	return
 }
 
-// LUID returns the LUID of the adapter.
+// LUID returns the LUID of the adapter, or 0 for a closed, zero or nil Adapter or when the DLL cannot load.
 func (wintun *Adapter) LUID() (luid uint64) {
+	handle := wintun.live()
+	if handle == 0 {
+		return 0
+	}
 	addr, err := procWintunGetAdapterLUID.address()
 	if err != nil {
 		return 0
 	}
-	syscall.Syscall(addr, 2, uintptr(wintun.handle), uintptr(unsafe.Pointer(&luid)), 0)
+	syscall.Syscall(addr, 2, handle, uintptr(unsafe.Pointer(&luid)), 0)
 	return
 }
 

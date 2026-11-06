@@ -158,7 +158,7 @@ func ttParseUDP(packet []byte) (src, dst netip.AddrPort, payload []byte, ok bool
 }
 
 // ttReceive reads the session's packets for up to a second and reports whether one was a UDP datagram from src to dst carrying payload.
-func ttReceive(t *testing.T, session wintun.Session, src, dst netip.AddrPort, payload []byte) bool {
+func ttReceive(t *testing.T, session *wintun.Session, src, dst netip.AddrPort, payload []byte) bool {
 	t.Helper()
 	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
 		packet, err := session.ReceivePacket()
@@ -180,7 +180,7 @@ func ttReceive(t *testing.T, session wintun.Session, src, dst netip.AddrPort, pa
 }
 
 // ttSend writes packet into the adapter through session, as if the peer had sent it.
-func ttSend(t *testing.T, session wintun.Session, packet []byte) {
+func ttSend(t *testing.T, session *wintun.Session, packet []byte) {
 	t.Helper()
 	buf, err := session.AllocateSendPacket(len(packet))
 	if err != nil {

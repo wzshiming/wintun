@@ -6,6 +6,7 @@
 package wintun
 
 import (
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 
@@ -13,7 +14,15 @@ import (
 )
 
 type Session struct {
-	handle uintptr
+	handle atomic.Uintptr
+}
+
+// live returns the session's handle, or 0 for an ended, zero or nil Session.
+func (session *Session) live() uintptr {
+	if session == nil {
+		return 0
+	}
+	return session.handle.Load()
 }
 
 const (
@@ -44,43 +53,67 @@ func ringPointer(r uintptr) *byte {
 	return *(**byte)(unsafe.Pointer(&r))
 }
 
-func (wintun *Adapter) StartSession(capacity uint32) (session Session, err error) {
+// StartSession starts a session on the adapter; for a closed, zero or nil Adapter it returns windows.ERROR_INVALID_HANDLE.
+func (wintun *Adapter) StartSession(capacity uint32) (*Session, error) {
+	handle := wintun.live()
+	if handle == 0 {
+		return nil, windows.ERROR_INVALID_HANDLE
+	}
 	addr, err := procWintunStartSession.address()
 	if err != nil {
-		return Session{}, err
+		return nil, err
 	}
-	r0, _, e1 := syscall.Syscall(addr, 2, uintptr(wintun.handle), uintptr(capacity), 0)
+	r0, _, e1 := syscall.Syscall(addr, 2, handle, uintptr(capacity), 0)
 	if r0 == 0 {
-		err = errnoErr(e1)
-	} else {
-		session = Session{r0}
+		return nil, errnoErr(e1)
 	}
-	return
+	session := new(Session)
+	session.handle.Store(r0)
+	return session, nil
 }
 
-func (session Session) End() {
-	if addr, err := procWintunEndSession.address(); err == nil {
-		syscall.Syscall(addr, 1, session.handle, 0, 0)
+// End ends the session, handing its handle to the DLL once; it does nothing for an ended, zero or nil Session.
+// Readers must be stopped first, by setting ReadWaitEvent's event and waiting for them.
+func (session *Session) End() {
+	if session.live() == 0 {
+		return
+	}
+	addr, err := procWintunEndSession.address()
+	if err != nil {
+		return
+	}
+	if handle := session.handle.Swap(0); handle != 0 {
+		syscall.Syscall(addr, 1, handle, 0, 0)
 	}
 }
 
-func (session Session) ReadWaitEvent() (handle windows.Handle) {
+// ReadWaitEvent returns the event signalled when packets can be received, or 0 for an ended, zero or nil Session.
+func (session *Session) ReadWaitEvent() (handle windows.Handle) {
+	live := session.live()
+	if live == 0 {
+		return 0
+	}
 	addr, err := procWintunGetReadWaitEvent.address()
 	if err != nil {
 		return 0
 	}
-	r0, _, _ := syscall.Syscall(addr, 1, session.handle, 0, 0)
+	r0, _, _ := syscall.Syscall(addr, 1, live, 0, 0)
 	handle = windows.Handle(r0)
 	return
 }
 
-func (session Session) ReceivePacket() (packet []byte, err error) {
+// ReceivePacket returns the next received packet; for an ended, zero or nil Session it returns windows.ERROR_HANDLE_EOF.
+func (session *Session) ReceivePacket() (packet []byte, err error) {
+	handle := session.live()
+	if handle == 0 {
+		return nil, windows.ERROR_HANDLE_EOF
+	}
 	addr, err := procWintunReceivePacket.address()
 	if err != nil {
 		return nil, err
 	}
 	var packetSize uint32
-	r0, _, e1 := syscall.Syscall(addr, 2, session.handle, uintptr(unsafe.Pointer(&packetSize)), 0)
+	r0, _, e1 := syscall.Syscall(addr, 2, handle, uintptr(unsafe.Pointer(&packetSize)), 0)
 	if r0 == 0 {
 		err = errnoErr(e1)
 		return
@@ -89,18 +122,29 @@ func (session Session) ReceivePacket() (packet []byte, err error) {
 	return
 }
 
-func (session Session) ReleaseReceivePacket(packet []byte) {
+// ReleaseReceivePacket releases a packet ReceivePacket returned; it does nothing for an ended, zero or nil Session.
+func (session *Session) ReleaseReceivePacket(packet []byte) {
+	handle := session.live()
+	if handle == 0 {
+		return
+	}
 	if addr, err := procWintunReleaseReceivePacket.address(); err == nil {
-		syscall.Syscall(addr, 2, session.handle, uintptr(unsafe.Pointer(&packet[0])), 0)
+		syscall.Syscall(addr, 2, handle, uintptr(unsafe.Pointer(&packet[0])), 0)
 	}
 }
 
-func (session Session) AllocateSendPacket(packetSize int) (packet []byte, err error) {
+// AllocateSendPacket returns packetSize bytes of the send ring; for an ended, zero or nil Session it returns
+// windows.ERROR_HANDLE_EOF.
+func (session *Session) AllocateSendPacket(packetSize int) (packet []byte, err error) {
+	handle := session.live()
+	if handle == 0 {
+		return nil, windows.ERROR_HANDLE_EOF
+	}
 	addr, err := procWintunAllocateSendPacket.address()
 	if err != nil {
 		return nil, err
 	}
-	r0, _, e1 := syscall.Syscall(addr, 2, session.handle, uintptr(packetSize), 0)
+	r0, _, e1 := syscall.Syscall(addr, 2, handle, uintptr(packetSize), 0)
 	if r0 == 0 {
 		err = errnoErr(e1)
 		return
@@ -109,8 +153,13 @@ func (session Session) AllocateSendPacket(packetSize int) (packet []byte, err er
 	return
 }
 
-func (session Session) SendPacket(packet []byte) {
+// SendPacket sends a packet AllocateSendPacket returned; it does nothing for an ended, zero or nil Session.
+func (session *Session) SendPacket(packet []byte) {
+	handle := session.live()
+	if handle == 0 {
+		return
+	}
 	if addr, err := procWintunSendPacket.address(); err == nil {
-		syscall.Syscall(addr, 2, session.handle, uintptr(unsafe.Pointer(&packet[0])), 0)
+		syscall.Syscall(addr, 2, handle, uintptr(unsafe.Pointer(&packet[0])), 0)
 	}
 }
