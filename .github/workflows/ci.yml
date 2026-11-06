@@ -82,8 +82,9 @@ jobs:
       - name: E2E
         shell: bash
         run: |
-          WINTUN_E2E=1 "$RUNNER_TEMP/wintun-e2e.test.exe" -test.v -test.run '^TestE2EAdapter$' -test.timeout 5m | tee "$RUNNER_TEMP/wintun-e2e.log"
+          WINTUN_E2E=1 "$RUNNER_TEMP/wintun-e2e.test.exe" -test.v -test.run '^TestE2E' -test.timeout 5m | tee "$RUNNER_TEMP/wintun-e2e.log"
           grep -qF -- "--- PASS: TestE2EAdapter (" "$RUNNER_TEMP/wintun-e2e.log" || { echo "TestE2EAdapter did not pass"; exit 1; }
+          grep -qF -- "--- PASS: TestE2ELogger (" "$RUNNER_TEMP/wintun-e2e.log" || { echo "TestE2ELogger did not pass"; exit 1; }
       - name: Network state
         if: failure()
         shell: powershell

@@ -57,14 +57,28 @@ The package exports nothing outside Windows. On Windows it exports the API of `g
 
 - `type Adapter`, `const AdapterNameMax`, `func CreateAdapter(name string, tunnelType string, requestedGUID *windows.GUID) (*Adapter, error)`, `func OpenAdapter(name string) (*Adapter, error)`, and the methods `Close() error`, `LUID() uint64` and `StartSession(capacity uint32) (*Session, error)`.
 - `type Session` with `End()`, `ReadWaitEvent() windows.Handle`, `ReceivePacket() ([]byte, error)`, `ReleaseReceivePacket([]byte)`, `AllocateSendPacket(int) ([]byte, error)` and `SendPacket([]byte)`; `type Packet`, `const PacketSizeMax`, `RingCapacityMin` and `RingCapacityMax`.
-- `func Uninstall() error`, `func RunningVersion() (uint32, error)`, and `type TimestampedWriter`, which the DLL's log messages go to when it is the writer of the standard logger.
+- `func Uninstall() error`, `func RunningVersion() (uint32, error)`, and `type TimestampedWriter`, which the DLL's log messages go to when it is the writer of the standard logger and no `Logger` is set.
 - `func Version() string` returns the Wintun version of the embedded DLL, 0.14.1, without loading it.
+
+It adds `func SetLogger(Logger)`, `type Logger func(level LogLevel, timestamp time.Time, message string)` and `type LogLevel` with `LogInfo`, `LogWarn` and `LogErr`; see [Logging](#logging).
 
 Unlike `golang.zx2c4.com/wintun`, which panics when the DLL cannot load or lacks an export, nothing here panics: every function with an error result returns that failure, a zero or nil receiver gets the closed results below without loading the DLL, and a DLL call that fails without a last error returns `syscall.EINVAL`; when the DLL cannot load, `LUID` returns 0 and `ReadWaitEvent` 0. A dead handle never reaches the DLL:
 
 - A closed, zero or nil `Adapter`'s `Close` returns nil, `LUID` 0 and `StartSession` `windows.ERROR_INVALID_HANDLE`.
 - An ended, zero or nil `Session`'s `ReceivePacket` and `AllocateSendPacket` return `windows.ERROR_HANDLE_EOF`, `ReadWaitEvent` 0, and `ReleaseReceivePacket` and `SendPacket` do nothing, as they do for a nil packet.
 - `AllocateSendPacket` returns `windows.ERROR_INVALID_PARAMETER` for a size outside 0 to `PacketSizeMax` without calling the DLL, and a packet of exactly that size otherwise.
+
+## Logging
+
+By default the DLL's log messages go to the standard logger, as in `golang.zx2c4.com/wintun`: to its writer's `WriteWithTimestamp` with the logger's prefix and the time in Unix nanoseconds if the writer is a `TimestampedWriter`, through `log.Println` otherwise. `SetLogger` routes them to a `Logger` instead, with the level (`LogInfo`, `LogWarn` or `LogErr`, Wintun's `WINTUN_LOG_INFO`, `WARN` and `ERR`), the time in UTC and the message:
+
+```go
+wintun.SetLogger(func(level wintun.LogLevel, timestamp time.Time, message string) {
+	slog.Info(message, "level", int(level), "time", timestamp)
+})
+```
+
+`SetLogger` may be called at any time, before or after the DLL loads, and `SetLogger(nil)` restores the default. The DLL calls the `Logger` on its own threads, possibly concurrently, so it must be safe for that; a panic in it is recovered and drops the message.
 
 ## Embedded DLLs
 
@@ -92,17 +106,19 @@ Unlike `golang.zx2c4.com/wintun`, which panics when the DLL cannot load or lacks
 
 ## End-to-end tests
 
-`TestE2EAdapter`, in the root package, creates a real adapter on Windows through this package's API, with the embedded `wintun.dll` loaded from memory. Run it from an elevated prompt with `WINTUN_E2E=1` in the repository root, or it skips.
+`TestE2EAdapter` and `TestE2ELogger`, in the root package, create a real adapter on Windows through this package's API, with the embedded `wintun.dll` loaded from memory. Run them from an elevated prompt with `WINTUN_E2E=1` in the repository root, or they skip.
 
 ```sh
-WINTUN_E2E=1 go test -v -run '^TestE2EAdapter$' .
+WINTUN_E2E=1 go test -v -run '^TestE2E' .
 ```
 
-It creates an adapter with the requested name and GUID, checks its LUID names an interface with that GUID and name and that the running driver is the DLL's version, `Version()`, starts a session and checks its read-wait event, assigns it 198.18.0.5/30, has the session read a UDP datagram the host sends to 198.18.0.6 and send back one that the sending socket receives, ends the session, and closes the adapter, then waits for it to go away, except for amd64 on arm64 Windows, which cannot remove it.
+`TestE2EAdapter` creates an adapter with the requested name and GUID, checks its LUID names an interface with that GUID and name and that the running driver is the DLL's version, `Version()`, starts a session and checks its read-wait event, assigns it 198.18.0.5/30, has the session read a UDP datagram the host sends to 198.18.0.6 and send back one that the sending socket receives, ends the session, and closes the adapter, then waits for it to go away, except for amd64 on arm64 Windows, which cannot remove it.
+
+`TestE2ELogger` sets a `Logger`, creates and closes another adapter and opens a missing one, and checks that the DLL logged at least one message and that each has a known level, a time within five minutes of now and a text, which exercises the logger callback's calling convention on each architecture.
 
 The DLL's Authenticode signature is checked by the root package's `TestEmbeddedDLLIsTrustedAndSignedByWireGuard`, which needs no privileges.
 
-CI fails unless `TestE2EAdapter` passes on `windows-latest` with amd64 (`-race`) and 386 under WOW64, and on `windows-11-arm` with arm64 and with amd64 and 386 under emulation, so each DLL runs on every Windows it supports.
+CI fails unless `TestE2EAdapter` and `TestE2ELogger` pass on `windows-latest` with amd64 (`-race`) and 386 under WOW64, and on `windows-11-arm` with arm64 and with amd64 and 386 under emulation, so each DLL runs on every Windows it supports.
 
 ## License
 
