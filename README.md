@@ -33,26 +33,27 @@ func open() (tun.Device, error) { // golang.zx2c4.com/wireguard/tun
 
 ## Embedded DLLs
 
-The DLLs are the unmodified builds of Wintun 0.14.1, signed by WireGuard LLC, from <https://www.wintun.net/builds/wintun-0.14.1.zip>, whose SHA-256 `07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51` is the one wintun.net publishes.
+[`embedded/`](embedded) mirrors the `wintun/` directory of the release zip, keeping only its license and DLLs: the unmodified builds of Wintun 0.14.1, signed by WireGuard LLC, from <https://www.wintun.net/builds/wintun-0.14.1.zip>, checked against the SHA-256 that wintun.net publishes, which [generate.go](generate.go) records.
 
 | GOARCH | File | From the zip | SHA-256 |
 | --- | --- | --- | --- |
-| `386` | [bin/386/wintun.dll](bin/386/wintun.dll) | `wintun/bin/x86/wintun.dll` | `d694fa46ab4cfebcb2632d094c7aa97278eef2f8052438621766d863ae98a931` |
-| `amd64` | [bin/amd64/wintun.dll](bin/amd64/wintun.dll) | `wintun/bin/amd64/wintun.dll` | `e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce` |
-| `arm64` | [bin/arm64/wintun.dll](bin/arm64/wintun.dll) | `wintun/bin/arm64/wintun.dll` | `f7ba89005544be9d85231a9e0d5f23b2d15b3311667e2dad0debd344918a3f80` |
-| | [bin/LICENSE.txt](bin/LICENSE.txt) | `wintun/LICENSE.txt` | `183adac21e7d96c508c8fd34d394b7b6708bc81564ad1bad61ab66143a008cd2` |
+| `386` | [embedded/bin/x86/wintun.dll](embedded/bin/x86/wintun.dll) | `wintun/bin/x86/wintun.dll` | `d694fa46ab4cfebcb2632d094c7aa97278eef2f8052438621766d863ae98a931` |
+| `amd64` | [embedded/bin/amd64/wintun.dll](embedded/bin/amd64/wintun.dll) | `wintun/bin/amd64/wintun.dll` | `e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce` |
+| `arm64` | [embedded/bin/arm64/wintun.dll](embedded/bin/arm64/wintun.dll) | `wintun/bin/arm64/wintun.dll` | `f7ba89005544be9d85231a9e0d5f23b2d15b3311667e2dad0debd344918a3f80` |
+| | [embedded/bin/arm/wintun.dll](embedded/bin/arm/wintun.dll) | `wintun/bin/arm/wintun.dll` | `daad267411ecdc70a0535e274d2c3e9da3d0084bdac7662cb8424dd4a031b4d9` |
+| | [embedded/LICENSE.txt](embedded/LICENSE.txt) | `wintun/LICENSE.txt` | `183adac21e7d96c508c8fd34d394b7b6708bc81564ad1bad61ab66143a008cd2` |
 
 - Each DLL carries the Wintun 0.14 driver for every Windows it can run on: the 386 DLL for x86, amd64 and arm64 Windows, the amd64 DLL for amd64 and arm64 Windows, the arm64 DLL for arm64 Windows. Under WOW64 or x64 emulation it removes adapters through the native DLL it also carries, run with `%WINDIR%\Sysnative\rundll32.exe`.
 - Only WOW64 processes have `Sysnative`, so an amd64 build on arm64 Windows creates and uses adapters but cannot remove them; build for arm64, or 386, there.
-- The zip's `wintun/bin/arm/wintun.dll` is left out, as Go removed `windows/arm` in Go 1.26, and so are `wintun/include/wintun.h` and `wintun/README.md`, as `golang.zx2c4.com/wintun` binds the DLL's exports by name.
-- `go test` checks that each DLL is a PE DLL for its GOARCH whose Authenticode signer is WireGuard LLC, and that this table holds the DLLs' hashes. CI's `dlls` job runs `go generate` again and fails on any difference, so the committed files are those of the release.
+- The arm DLL is kept with the release but embedded in no build, as Go has no `windows/arm` port. The zip's `wintun/include/wintun.h` and `wintun/README.md` are left out, as `golang.zx2c4.com/wintun` binds the DLL's exports by name.
+- `go test` checks that `embedded/` holds just these files, that each DLL is a PE DLL for its directory's architecture whose Authenticode signer is WireGuard LLC, and that this table holds their hashes and this section the version. CI's `dlls` job runs `go generate` again and fails on any difference, so the committed files are those of the release.
 
 ### Updating
 
 1. Take the new version and the SHA-256 of its zip from <https://www.wintun.net>.
-2. Put both on the `//go:generate` line in [generate.go](generate.go) and run `go generate`. It downloads the zip, checks its SHA-256, writes the DLLs, `bin/LICENSE.txt` and [version.go](version.go), and prints the SHA-256 of each file it wrote.
-3. Update this section with the version and the hashes; `go test` fails until the table matches the DLLs.
-4. Read the new `bin/LICENSE.txt` for changed terms; CI then runs the end-to-end tests with each new DLL.
+2. Put both on the `//go:generate` line in [generate.go](generate.go) and run `go generate`. It downloads the zip, checks its SHA-256, replaces `embedded/` with the zip's license and DLLs, writes [version.go](version.go), and prints the SHA-256 of each file it wrote.
+3. Update this section with the version and the hashes; `go test` fails until they match.
+4. Read the new `embedded/LICENSE.txt` for changed terms; CI then runs the end-to-end tests with each new DLL.
 
 ## End-to-end tests
 
@@ -70,4 +71,4 @@ CI fails unless all three pass on `windows-latest` with amd64 (`-race`) and 386 
 
 ## License
 
-The Go code is under the MIT license, see [LICENSE](LICENSE). The DLLs belong to WireGuard LLC and are under the prebuilt binaries license in [bin/LICENSE.txt](bin/LICENSE.txt), which allows distributing them unmodified alongside software that uses them only through the API of `wintun.h`.
+The Go code is under the MIT license, see [LICENSE](LICENSE). The DLLs belong to WireGuard LLC and are under the prebuilt binaries license in [embedded/LICENSE.txt](embedded/LICENSE.txt), which allows distributing them unmodified alongside software that uses them only through the API of `wintun.h`.

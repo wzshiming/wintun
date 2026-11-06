@@ -8,24 +8,26 @@ import (
 	"encoding/asn1"
 	"encoding/binary"
 	"encoding/hex"
-	"maps"
+	"io/fs"
 	"math/big"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
-// ttMachines are the PE machine types of the DLLs under bin, by GOARCH.
+// ttMachines are the PE machine types of the DLLs under embedded/bin, by the release's directory name.
 var ttMachines = map[string]uint16{
-	"386":   pe.IMAGE_FILE_MACHINE_I386,
+	"x86":   pe.IMAGE_FILE_MACHINE_I386,
 	"amd64": pe.IMAGE_FILE_MACHINE_AMD64,
 	"arm64": pe.IMAGE_FILE_MACHINE_ARM64,
+	"arm":   pe.IMAGE_FILE_MACHINE_ARMNT,
 }
 
-func ttBinDLL(t *testing.T, goarch string) []byte {
+func ttEmbeddedFile(t *testing.T, name string) []byte {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("bin", goarch, "wintun.dll"))
+	data, err := os.ReadFile(filepath.Join("embedded", filepath.FromSlash(name)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,26 +99,32 @@ func ttSigner(t *testing.T, f *pe.File, data []byte) *x509.Certificate {
 	return nil
 }
 
-func TestBinHoldsADLLForEachWindowsArchitecture(t *testing.T) {
-	entries, err := os.ReadDir("bin")
+func TestEmbeddedHoldsOnlyTheLicenseAndADLLPerReleaseDirectory(t *testing.T) {
+	var got []string
+	err := filepath.WalkDir("embedded", func(path string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			rel, _ := filepath.Rel("embedded", path)
+			got = append(got, filepath.ToSlash(rel))
+		}
+		return err
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var dirs []string
-	for _, e := range entries {
-		if e.IsDir() {
-			dirs = append(dirs, e.Name())
-		}
+	want := []string{"LICENSE.txt"}
+	for dir := range ttMachines {
+		want = append(want, "bin/"+dir+"/wintun.dll")
 	}
-	if want := slices.Sorted(maps.Keys(ttMachines)); !slices.Equal(dirs, want) {
-		t.Errorf("bin holds %q, want %q", dirs, want)
+	slices.Sort(got)
+	if slices.Sort(want); !slices.Equal(got, want) {
+		t.Errorf("embedded holds %q, want %q", got, want)
 	}
 }
 
 func TestEmbeddedDLLsAreSignedByWireGuardForTheirArchitecture(t *testing.T) {
-	for goarch, machine := range ttMachines {
-		t.Run(goarch, func(t *testing.T) {
-			data := ttBinDLL(t, goarch)
+	for dir, machine := range ttMachines {
+		t.Run(dir, func(t *testing.T) {
+			data := ttEmbeddedFile(t, "bin/"+dir+"/wintun.dll")
 			f, err := pe.NewFile(bytes.NewReader(data))
 			if err != nil {
 				t.Fatal(err)
@@ -132,17 +140,28 @@ func TestEmbeddedDLLsAreSignedByWireGuardForTheirArchitecture(t *testing.T) {
 	}
 }
 
-func TestREADMEDocumentsTheEmbeddedDLLs(t *testing.T) {
+func TestREADMEDocumentsTheEmbeddedFilesAndVersion(t *testing.T) {
 	readme, err := os.ReadFile("README.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(readme, []byte("wintun-"+Version+".zip")) {
-		t.Errorf("README.md does not name wintun-%s.zip", Version)
+	for _, s := range []string{"Wintun " + Version + ",", "wintun-" + Version + ".zip"} {
+		if !bytes.Contains(readme, []byte(s)) {
+			t.Errorf("README.md lacks %q", s)
+		}
 	}
-	for goarch := range ttMachines {
-		if sum := sha256.Sum256(ttBinDLL(t, goarch)); !bytes.Contains(readme, []byte(hex.EncodeToString(sum[:]))) {
-			t.Errorf("README.md lacks bin/%s/wintun.dll's SHA-256 %x", goarch, sum)
+	names := []string{"LICENSE.txt"}
+	for dir := range ttMachines {
+		names = append(names, "bin/"+dir+"/wintun.dll")
+	}
+	lines := strings.Split(string(readme), "\n")
+	for _, name := range names {
+		sum := sha256.Sum256(ttEmbeddedFile(t, name))
+		row := "| [embedded/" + name + "](embedded/" + name + ") |"
+		if !slices.ContainsFunc(lines, func(l string) bool {
+			return strings.Contains(l, row) && strings.Contains(l, "`"+hex.EncodeToString(sum[:])+"`")
+		}) {
+			t.Errorf("README.md has no table row for embedded/%s with its SHA-256 %x", name, sum)
 		}
 	}
 }

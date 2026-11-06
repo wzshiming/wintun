@@ -5,8 +5,8 @@
 *.so
 *.dylib
 
-# The embedded Wintun DLLs
-!bin/*/wintun.dll
+# The Wintun DLLs mirrored from the release
+!embedded/bin/*/wintun.dll
 
 # Test binary, built with `go test -c`
 *.test

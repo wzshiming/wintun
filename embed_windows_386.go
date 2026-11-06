@@ -5,5 +5,5 @@ import _ "embed"
 // Embedded reports whether this build carries a wintun.dll.
 const Embedded = true
 
-//go:embed bin/386/wintun.dll
+//go:embed embedded/bin/x86/wintun.dll
 var dll []byte
