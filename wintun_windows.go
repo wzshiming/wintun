@@ -149,7 +149,7 @@ func OpenAdapter(name string) (wintun *Adapter, err error) {
 
 // Close closes a Wintun adapter. It hands the handle to the DLL once; later calls, and those on a nil or zero
 // Adapter, return nil.
-func (wintun *Adapter) Close() error {
+func (wintun *Adapter) Close() (err error) {
 	if wintun.live() == 0 {
 		return nil
 	}
