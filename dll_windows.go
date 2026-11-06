@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/windows/driver/memmod"
@@ -82,7 +83,11 @@ func (d *lazyDLL) Load() error {
 		return nil
 	}
 
-	module, err := memmod.LoadLibrary(d.data)
+	var module *memmod.Module
+	err := withStagedImage(d.data, func(image []byte) (err error) {
+		module, err = memmod.LoadLibrary(image)
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("Unable to load library: %w", err)
 	}
@@ -96,4 +101,20 @@ func (d *lazyDLL) Load() error {
 
 	d.module.Store(module)
 	return nil
+}
+
+// withStagedImage calls use with a copy of data in memory Go does not manage, released once use returns.
+// memmod's Sections converts the section table to a 0xffff-entry array, which checkptr rejects when it reaches past
+// the Go object holding the image into another, so the allocation reserves that whole span past the image's end.
+func withStagedImage(data []byte, use func(image []byte) error) error {
+	size := uintptr(len(data)) + 0xffff*unsafe.Sizeof(memmod.IMAGE_SECTION_HEADER{})
+	addr, err := windows.VirtualAlloc(0, size, windows.MEM_RESERVE|windows.MEM_COMMIT, windows.PAGE_READWRITE)
+	if err != nil {
+		return fmt.Errorf("Error allocating image staging memory: %w", err)
+	}
+	defer windows.VirtualFree(addr, 0, windows.MEM_RELEASE)
+	// Converting through &addr keeps vet's unsafeptr check quiet about a pointer Go does not manage.
+	image := unsafe.Slice(*(**byte)(unsafe.Pointer(&addr)), len(data))
+	copy(image, data)
+	return use(image)
 }
