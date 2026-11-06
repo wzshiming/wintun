@@ -289,7 +289,7 @@ func TestE2EAdapter(t *testing.T) {
 	adapter.Close()
 	open = false
 	if ttEmulatedOnARM64(t) {
-		// Wintun 0.14.1 removes it through %WINDIR%\Sysnative\rundll32.exe, which only WOW64 processes have.
+		// The embedded Wintun Version removes it through %WINDIR%\Sysnative\rundll32.exe, which only WOW64 processes have.
 		t.Log("an amd64 process on arm64 Windows cannot remove its adapter; not waiting for it to go away")
 		return
 	}
