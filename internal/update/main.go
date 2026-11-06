@@ -133,7 +133,7 @@ func versionFile(version string) ([]byte, error) {
 
 package wintun
 
-// Version is the version of the embedded Wintun DLLs.
-const Version = %q
+// version is the version of the embedded Wintun DLLs.
+const version = %q
 `, version))
 }

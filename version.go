@@ -2,5 +2,5 @@
 
 package wintun
 
-// Version is the version of the embedded Wintun DLLs.
-const Version = "0.14.1"
+// version is the version of the embedded Wintun DLLs.
+const version = "0.14.1"

@@ -108,8 +108,8 @@ func TestRunMirrorsTheReleasesLicenseAndDLLsAndWritesVersion(t *testing.T) {
 	if !maps.Equal(got, want) {
 		t.Errorf("wrote %q, want %q", got, want)
 	}
-	if !strings.HasPrefix(version, "// Code generated ") || !strings.Contains(version, `const Version = "9.9"`) {
-		t.Errorf("version.go = %q, want generated code declaring Version 9.9", version)
+	if !strings.HasPrefix(version, "// Code generated ") || !strings.Contains(version, `const version = "9.9"`) {
+		t.Errorf("version.go = %q, want generated code declaring the unexported version 9.9", version)
 	}
 	if formatted, err := format.Source([]byte(version)); err != nil || string(formatted) != version {
 		t.Errorf("version.go is not gofmt-formatted: %v", err)

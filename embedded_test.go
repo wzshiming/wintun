@@ -206,7 +206,7 @@ func TestREADMEDocumentsTheEmbeddedFilesAndVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, s := range []string{"Wintun " + Version + ",", "wintun-" + Version + ".zip"} {
+	for _, s := range []string{"Wintun " + version + ",", "wintun-" + version + ".zip"} {
 		if !bytes.Contains(readme, []byte(s)) {
 			t.Errorf("README.md lacks %q", s)
 		}
