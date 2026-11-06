@@ -24,17 +24,22 @@ func echo() error {
 	defer session.End()
 	for {
 		packet, err := session.ReceivePacket()
-		if err == windows.ERROR_NO_MORE_ITEMS {
+		if errors.Is(err, windows.ERROR_NO_MORE_ITEMS) {
 			windows.WaitForSingleObject(session.ReadWaitEvent(), windows.INFINITE)
 			continue
 		} else if err != nil {
 			return err
 		}
 		reply, err := session.AllocateSendPacket(len(packet))
-		if err == nil {
-			copy(reply, packet)
-			session.SendPacket(reply)
+		if errors.Is(err, windows.ERROR_BUFFER_OVERFLOW) {
+			session.ReleaseReceivePacket(packet) // the send ring is full: drop the packet
+			continue
+		} else if err != nil {
+			session.ReleaseReceivePacket(packet)
+			return err
 		}
+		copy(reply, packet)
+		session.SendPacket(reply)
 		session.ReleaseReceivePacket(packet)
 	}
 }
@@ -42,7 +47,7 @@ func echo() error {
 
 The first call of any Wintun function loads the embedded DLL once, with [memmod](https://pkg.go.dev/golang.zx2c4.com/wireguard/windows/driver/memmod), and keeps it for the life of the process; memmod resolves its imports from System32 only. Creating an adapter or removing the driver needs an elevated process.
 
-The in-memory module is not in the Windows loader's list, so neither `golang.zx2c4.com/wintun` nor wireguard-go's `tun.CreateTUN` in the same process can find it: they still look for a `wintun.dll` file.
+The in-memory module is not in the Windows loader's list, so another binding in the same process that loads `wintun.dll` by name, such as `golang.zx2c4.com/wintun`, cannot find it: it still looks for a `wintun.dll` file.
 
 ## API
 
@@ -52,21 +57,8 @@ The package exports nothing outside Windows. On Windows it exports exactly the A
 - `type Session` with `End()`, `ReadWaitEvent() windows.Handle`, `ReceivePacket() ([]byte, error)`, `ReleaseReceivePacket([]byte)`, `AllocateSendPacket(int) ([]byte, error)` and `SendPacket([]byte)`; `type Packet`, `const PacketSizeMax`, `RingCapacityMin` and `RingCapacityMax`.
 - `func Uninstall() error`, `func RunningVersion() (uint32, error)`, and `type TimestampedWriter`, which the DLL's log messages go to when it is the writer of the standard logger.
 - `func Version() string` returns the Wintun version of the embedded DLL, 0.14.1, without loading it.
-- The subpackage `github.com/wzshiming/wintun/tun` exports, on Windows only, the Windows-specific API of wireguard-go's `tun` package at v0.0.0-20261024220952-b3bc704ef0ee: `var WintunTunnelType`, `var WintunStaticRequestedGUID *windows.GUID`, `func CreateTUN(ifname string, mtu int) (tun.Device, error)`, `func CreateTUNWithRequestedGUID(ifname string, requestedGUID *windows.GUID, mtu int) (tun.Device, error)` and `type NativeTun` with `LUID() uint64`, `RunningVersion() (uint32, error)`, `ForceMTU(int)` and the methods of `tun.Device`.
 
 Unlike `golang.zx2c4.com/wintun`, which panics when the DLL cannot load or lacks an export, every function with an error result returns that failure; the others are reached only through an `Adapter` or a `Session`, after a successful load.
-
-## TUN device
-
-[`./tun`](tun) is wireguard-go's Windows `NativeTun` ported onto this package, so one call returns a `golang.zx2c4.com/wireguard/tun.Device` backed by the in-memory DLL. Code using wireguard-go's `tun.CreateTUN` on Windows switches by changing its import path; the root package itself never imports wireguard-go.
-
-```go
-import wintuntun "github.com/wzshiming/wintun/tun"
-
-dev, err := wintuntun.CreateTUN("wg0", 0) // MTU 0 means wireguard-go's default, 1420
-```
-
-The e2e module's `TestE2ETUN` creates such a device with a fixed GUID, assigns it 198.18.0.9/30, reads with `Read` a UDP datagram the host sends to 198.18.0.10, writes back one with `Write` that the sending socket receives, closes the device and waits for the interface to go away; CI requires it to pass beside `TestE2EAdapter`.
 
 ## Embedded DLLs
 
@@ -82,7 +74,7 @@ The e2e module's `TestE2ETUN` creates such a device with a fixed GUID, assigns i
 
 - Each DLL carries the Wintun 0.14 driver for every Windows it can run on: the 386 DLL for x86, amd64 and arm64 Windows, the amd64 DLL for amd64 and arm64 Windows, the arm64 DLL for arm64 Windows. Under WOW64 or x64 emulation it removes adapters through the native DLL it also carries, run with `%WINDIR%\Sysnative\rundll32.exe`.
 - Only WOW64 processes have `Sysnative`, so an amd64 build on arm64 Windows creates and uses adapters but cannot remove them; build for arm64, or 386, there.
-- The arm DLL is kept with the release but embedded in no build, as Go has no `windows/arm` port. The zip's `wintun/include/wintun.h` and `wintun/README.md` are left out, as this package's own binding loads the DLL from memory and binds its exports by name.
+- Only the 386, amd64 and arm64 DLLs are embedded, one per build of that GOARCH. Go has no `windows/arm` port, so the arm DLL is only mirrored from the zip and embedded in no build. The zip's `wintun/include/wintun.h` and `wintun/README.md` are left out, as this package's own binding loads the DLL from memory and binds its exports by name.
 - `go test` checks that `embedded/` holds just these files, that each DLL is a PE DLL for its directory's architecture whose Authenticode signer is WireGuard LLC, and that this table holds their hashes and this section the version. CI's `dlls` job runs `go generate` again and fails on any difference, so the committed files are those of the release.
 
 ### Updating
@@ -94,20 +86,17 @@ The e2e module's `TestE2ETUN` creates such a device with a fixed GUID, assigns i
 
 ## End-to-end tests
 
-The end-to-end tests in [`./e2e`](e2e) create real adapters on Windows through this package's API and its `tun` subpackage, with the embedded `wintun.dll` loaded from memory. It is a module of its own, which replaces `github.com/wzshiming/wintun` with `../`; run both from an elevated prompt with `WINTUN_E2E=1`, or they skip.
+`TestE2EAdapter`, in the root package, creates a real adapter on Windows through this package's API, with the embedded `wintun.dll` loaded from memory. Run it from an elevated prompt with `WINTUN_E2E=1` in the repository root, or it skips.
 
 ```sh
-WINTUN_E2E=1 go test -C e2e -v .
+WINTUN_E2E=1 go test -v -run '^TestE2EAdapter$' .
 ```
 
-For an IDE that should see both modules at once, a local `go work init . ./e2e` is ignored by git and not committed.
-
-- `TestE2EAdapter`: creates an adapter with the requested name and GUID, checks its LUID names an interface with that GUID and name and that the running driver is the DLL's version, `Version()`, starts a session and checks its read-wait event, assigns it 198.18.0.5/30, has the session read a UDP datagram the host sends to 198.18.0.6 and send back one that the sending socket receives, ends the session, and closes the adapter, then waits for it to go away, except for amd64 on arm64 Windows, which cannot remove it.
-- `TestE2ETUN`: proves the `tun` subpackage's `tun.Device` carries UDP both ways and is removed on `Close`, as described under [TUN device](#tun-device).
+It creates an adapter with the requested name and GUID, checks its LUID names an interface with that GUID and name and that the running driver is the DLL's version, `Version()`, starts a session and checks its read-wait event, assigns it 198.18.0.5/30, has the session read a UDP datagram the host sends to 198.18.0.6 and send back one that the sending socket receives, ends the session, and closes the adapter, then waits for it to go away, except for amd64 on arm64 Windows, which cannot remove it.
 
 The DLL's Authenticode signature is checked by the root package's `TestEmbeddedDLLIsTrustedAndSignedByWireGuard`, which needs no privileges.
 
-CI fails unless both `TestE2EAdapter` and `TestE2ETUN` pass on `windows-latest` with amd64 (`-race`) and 386 under WOW64, and on `windows-11-arm` with arm64 and with amd64 and 386 under emulation, so each DLL runs on every Windows it supports.
+CI fails unless `TestE2EAdapter` passes on `windows-latest` with amd64 (`-race`) and 386 under WOW64, and on `windows-11-arm` with arm64 and with amd64 and 386 under emulation, so each DLL runs on every Windows it supports.
 
 ## License
 
