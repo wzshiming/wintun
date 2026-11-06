@@ -43,11 +43,25 @@ func TestConstantsAreUpstreams(t *testing.T) {
 	}
 }
 
-// ttLazyEnv makes the test binary run TestLazyHelper in a process of its own, where no other test has loaded the DLL.
-const ttLazyEnv = "WINTUN_TEST_LAZY_HELPER"
+// ttHelperEnv makes the test binary run a helper test in a process of its own, where no other test has loaded the DLL.
+const ttHelperEnv = "WINTUN_TEST_LAZY_HELPER"
+
+// ttRunHelper runs the helper test name in a process of its own and fails t unless it passes.
+func ttRunHelper(t *testing.T, name string) {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^"+name+"$", "-test.v")
+	cmd.Env = append(os.Environ(), ttHelperEnv+"=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("--- PASS: "+name+" ")) {
+		t.Errorf("%s did not pass:\n%s", name, out)
+	}
+}
 
 func TestLazyHelper(t *testing.T) {
-	if os.Getenv(ttLazyEnv) != "1" {
+	if os.Getenv(ttHelperEnv) != "1" {
 		t.Skip("run by TestPackageInitAndVersionLoadNothing")
 	}
 	if modwintun.module.Load() != nil {
@@ -62,15 +76,7 @@ func TestLazyHelper(t *testing.T) {
 }
 
 func TestPackageInitAndVersionLoadNothing(t *testing.T) {
-	cmd := exec.Command(os.Args[0], "-test.run=^TestLazyHelper$", "-test.v")
-	cmd.Env = append(os.Environ(), ttLazyEnv+"=1")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("%v\n%s", err, out)
-	}
-	if !bytes.Contains(out, []byte("--- PASS: TestLazyHelper ")) {
-		t.Errorf("TestLazyHelper did not pass:\n%s", out)
-	}
+	ttRunHelper(t, "TestLazyHelper")
 }
 
 func TestRunningVersionResolvesFromAModuleOutsideTheLoaderList(t *testing.T) {
