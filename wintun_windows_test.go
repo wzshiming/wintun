@@ -17,19 +17,19 @@ import (
 // The exported API of golang.zx2c4.com/wintun, pinned at compile time.
 var (
 	_ func(string, string, *windows.GUID) (*Adapter, error) = CreateAdapter
-	_ func(string) (*Adapter, error)                         = OpenAdapter
-	_ func(*Adapter) error                                   = (*Adapter).Close
-	_ func(*Adapter) uint64                                  = (*Adapter).LUID
-	_ func(*Adapter, uint32) (Session, error)                = (*Adapter).StartSession
-	_ func() error                                           = Uninstall
-	_ func() (uint32, error)                                 = RunningVersion
-	_ func() string                                          = Version
-	_ func(Session)                                          = Session.End
-	_ func(Session) windows.Handle                           = Session.ReadWaitEvent
-	_ func(Session) ([]byte, error)                          = Session.ReceivePacket
-	_ func(Session, []byte)                                  = Session.ReleaseReceivePacket
-	_ func(Session, int) ([]byte, error)                     = Session.AllocateSendPacket
-	_ func(Session, []byte)                                  = Session.SendPacket
+	_ func(string) (*Adapter, error)                        = OpenAdapter
+	_ func(*Adapter) error                                  = (*Adapter).Close
+	_ func(*Adapter) uint64                                 = (*Adapter).LUID
+	_ func(*Adapter, uint32) (Session, error)               = (*Adapter).StartSession
+	_ func() error                                          = Uninstall
+	_ func() (uint32, error)                                = RunningVersion
+	_ func() string                                         = Version
+	_ func(Session)                                         = Session.End
+	_ func(Session) windows.Handle                          = Session.ReadWaitEvent
+	_ func(Session) ([]byte, error)                         = Session.ReceivePacket
+	_ func(Session, []byte)                                 = Session.ReleaseReceivePacket
+	_ func(Session, int) ([]byte, error)                    = Session.AllocateSendPacket
+	_ func(Session, []byte)                                 = Session.SendPacket
 	_ interface {
 		WriteWithTimestamp(p []byte, ts int64) (n int, err error)
 	} = TimestampedWriter(nil)
