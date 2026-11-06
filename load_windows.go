@@ -42,9 +42,6 @@ func Load() error {
 }
 
 func (l *loader) load() error {
-	if !Embedded {
-		return fmt.Errorf("wintun: no wintun.dll for %s: %w", runtime.GOARCH, errors.ErrUnsupported)
-	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.module != 0 {

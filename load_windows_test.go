@@ -17,9 +17,6 @@ import (
 // ttWintunUse returns a loader that extracts below cache, which stands for the user cache, and fakes LoadLibrary; it also returns where wintun.dll goes and the paths the loader loads.
 func ttWintunUse(t *testing.T, cache string) (*loader, string, *[]string) {
 	t.Helper()
-	if !Embedded {
-		t.Skipf("no wintun.dll embedded for %s", runtime.GOARCH)
-	}
 	loaded := new([]string)
 	l := &loader{
 		cacheDir: func() (string, error) { return filepath.Join(cache, "wintun"), nil },
@@ -240,13 +237,4 @@ func TestLoadConcurrentCallsAllSucceed(t *testing.T) {
 		t.Errorf("concurrent Load: %v", err)
 	}
 	ttWintunWantLoaded(t, *loaded, path)
-}
-
-func TestLoadUnsupportedWithoutEmbeddedDLL(t *testing.T) {
-	if Embedded {
-		t.Skipf("wintun.dll is embedded for %s", runtime.GOARCH)
-	}
-	if err := Load(); !errors.Is(err, errors.ErrUnsupported) {
-		t.Errorf("Load = %v, want errors.ErrUnsupported", err)
-	}
 }
