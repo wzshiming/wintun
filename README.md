@@ -69,7 +69,7 @@ Unlike `golang.zx2c4.com/wintun`, which panics when the DLL cannot load or lacks
 
 - Each DLL carries the Wintun 0.14 driver for every Windows it can run on: the 386 DLL for x86, amd64 and arm64 Windows, the amd64 DLL for amd64 and arm64 Windows, the arm64 DLL for arm64 Windows. Under WOW64 or x64 emulation it removes adapters through the native DLL it also carries, run with `%WINDIR%\Sysnative\rundll32.exe`.
 - Only WOW64 processes have `Sysnative`, so an amd64 build on arm64 Windows creates and uses adapters but cannot remove them; build for arm64, or 386, there.
-- The arm DLL is kept with the release but embedded in no build, as Go has no `windows/arm` port. The zip's `wintun/include/wintun.h` and `wintun/README.md` are left out, as `golang.zx2c4.com/wintun` binds the DLL's exports by name.
+- The arm DLL is kept with the release but embedded in no build, as Go has no `windows/arm` port. The zip's `wintun/include/wintun.h` and `wintun/README.md` are left out, as this package's own binding loads the DLL from memory and binds its exports by name.
 - `go test` checks that `embedded/` holds just these files, that each DLL is a PE DLL for its directory's architecture whose Authenticode signer is WireGuard LLC, and that this table holds their hashes and this section the version. CI's `dlls` job runs `go generate` again and fails on any difference, so the committed files are those of the release.
 
 ### Updating
@@ -81,7 +81,7 @@ Unlike `golang.zx2c4.com/wintun`, which panics when the DLL cannot load or lacks
 
 ## End-to-end tests
 
-The end-to-end tests in [`./e2e`](e2e) load the real `wintun.dll` on Windows. They are a module of their own, which replaces `github.com/wzshiming/wintun` with `../`, so only they require `golang.zx2c4.com/wintun`; run them from the `e2e` directory. Every test skips unless `WINTUN_E2E=1`.
+The end-to-end test in [`./e2e`](e2e) creates a real adapter on Windows through this package's API, with the embedded `wintun.dll` loaded from memory. It is a module of its own, which replaces `github.com/wzshiming/wintun` with `../`; run it from an elevated prompt with `WINTUN_E2E=1`, or it skips.
 
 ```sh
 WINTUN_E2E=1 go test -C e2e -v .
@@ -89,11 +89,11 @@ WINTUN_E2E=1 go test -C e2e -v .
 
 For an IDE that should see both modules at once, a local `go work init . ./e2e` is ignored by git and not committed.
 
-- `TestE2ELoad`: `Load` loads the DLL from under `CacheDir()`, every function of `wintun.h` resolves in it, and `golang.zx2c4.com/wintun` finds it by its base name and reads its version, `Version`.
-- `TestE2ESignature`: `WinVerifyTrust` trusts the Authenticode signature of the extracted DLL.
-- `TestE2EAdapter` needs an elevated process: it creates an adapter with the requested name and GUID, checks the running driver is the DLL's, assigns it 198.18.0.5/30, has the session read a UDP datagram the host sends to 198.18.0.6 and write back one that the sending socket receives, and removes the adapter, except for amd64 on arm64 Windows, which cannot.
+- `TestE2EAdapter`: creates an adapter with the requested name and GUID, checks its LUID names an interface with that GUID and name and that the running driver is the DLL's version, `Version()`, starts a session and checks its read-wait event, assigns it 198.18.0.5/30, has the session read a UDP datagram the host sends to 198.18.0.6 and send back one that the sending socket receives, ends the session, and closes the adapter, then waits for it to go away, except for amd64 on arm64 Windows, which cannot remove it.
 
-CI fails unless all three pass on `windows-latest` with amd64 (`-race`) and 386 under WOW64, and on `windows-11-arm` with arm64 and with amd64 and 386 under emulation, so each DLL runs on every Windows it supports.
+The DLL's Authenticode signature is checked by the root package's `TestEmbeddedDLLIsTrustedAndSignedByWireGuard`, which needs no privileges.
+
+CI fails unless `TestE2EAdapter` passes on `windows-latest` with amd64 (`-race`) and 386 under WOW64, and on `windows-11-arm` with arm64 and with amd64 and 386 under emulation, so each DLL runs on every Windows it supports.
 
 ## License
 

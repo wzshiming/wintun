@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"os"
 	"runtime"
 	"syscall"
 	"testing"
@@ -15,7 +16,6 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
-	zxwintun "golang.zx2c4.com/wintun"
 
 	"github.com/wzshiming/wintun"
 )
@@ -158,7 +158,7 @@ func ttParseUDP(packet []byte) (src, dst netip.AddrPort, payload []byte, ok bool
 }
 
 // ttReceive reads the session's packets for up to a second and reports whether one was a UDP datagram from src to dst carrying payload.
-func ttReceive(t *testing.T, session zxwintun.Session, src, dst netip.AddrPort, payload []byte) bool {
+func ttReceive(t *testing.T, session wintun.Session, src, dst netip.AddrPort, payload []byte) bool {
 	t.Helper()
 	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
 		packet, err := session.ReceivePacket()
@@ -180,7 +180,7 @@ func ttReceive(t *testing.T, session zxwintun.Session, src, dst netip.AddrPort, 
 }
 
 // ttSend writes packet into the adapter through session, as if the peer had sent it.
-func ttSend(t *testing.T, session zxwintun.Session, packet []byte) {
+func ttSend(t *testing.T, session wintun.Session, packet []byte) {
 	t.Helper()
 	buf, err := session.AllocateSendPacket(len(packet))
 	if err != nil {
@@ -203,14 +203,16 @@ func ttEmulatedOnARM64(t *testing.T) bool {
 	return native == pe.IMAGE_FILE_MACHINE_ARM64
 }
 
-// TestE2EAdapter creates an adapter with the embedded DLL, sends a UDP datagram out through it and one back in, and removes it.
+// TestE2EAdapter creates an adapter through the DLL the package loads from memory, sends a UDP datagram out through it
+// and one back in, and removes it.
 func TestE2EAdapter(t *testing.T) {
-	ttGate(t)
+	if os.Getenv("WINTUN_E2E") != "1" {
+		t.Skip("installs the Wintun driver and creates an adapter; set WINTUN_E2E=1 to run")
+	}
 	if !windows.GetCurrentProcessToken().IsElevated() {
 		t.Skip("creating an adapter needs an elevated process")
 	}
-	ttLoad(t)
-	adapter, err := zxwintun.CreateAdapter(ttAdapterName, ttAdapterName, &ttAdapterGUID)
+	adapter, err := wintun.CreateAdapter(ttAdapterName, ttAdapterName, &ttAdapterGUID)
 	if err != nil {
 		t.Fatalf("CreateAdapter: %v", err)
 	}
@@ -222,14 +224,17 @@ func TestE2EAdapter(t *testing.T) {
 	})
 
 	var major, minor uint32
-	if _, err := fmt.Sscanf(wintun.Version, "%d.%d", &major, &minor); err != nil {
-		t.Fatalf("Version %q: %v", wintun.Version, err)
+	if _, err := fmt.Sscanf(wintun.Version(), "%d.%d", &major, &minor); err != nil {
+		t.Fatalf("Version %q: %v", wintun.Version(), err)
 	}
 	// The driver the DLL installs carries the DLL's major and minor version.
-	if got, err := zxwintun.RunningVersion(); err != nil || got != major<<16|minor {
-		t.Errorf("RunningVersion = %d.%d, %v; want the %d.%d driver of Wintun %s", got>>16, got&0xffff, err, major, minor, wintun.Version)
+	if got, err := wintun.RunningVersion(); err != nil || got != major<<16|minor {
+		t.Errorf("RunningVersion = %d.%d, %v; want the %d.%d driver of Wintun %s", got>>16, got&0xffff, err, major, minor, wintun.Version())
 	}
 	luid := adapter.LUID()
+	if luid == 0 {
+		t.Fatal("LUID = 0, want the adapter's")
+	}
 	index, err := ttLUIDIndex(luid)
 	if err != nil {
 		t.Fatalf("no interface has the adapter's LUID %#x: %v", luid, err)
@@ -251,6 +256,9 @@ func TestE2EAdapter(t *testing.T) {
 			session.End()
 		}
 	})
+	if event := session.ReadWaitEvent(); event == 0 {
+		t.Fatal("ReadWaitEvent = 0, want the session's event")
+	}
 	if err := ttAddAddress(luid, ttLocal); err != nil {
 		t.Fatalf("assign %s: %v", ttLocal, err)
 	}
