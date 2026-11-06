@@ -94,7 +94,7 @@ The e2e module's `TestE2ETUN` creates such a device with a fixed GUID, assigns i
 
 ## End-to-end tests
 
-The end-to-end test in [`./e2e`](e2e) creates a real adapter on Windows through this package's API, with the embedded `wintun.dll` loaded from memory. It is a module of its own, which replaces `github.com/wzshiming/wintun` with `../`; run it from an elevated prompt with `WINTUN_E2E=1`, or it skips.
+The end-to-end tests in [`./e2e`](e2e) create real adapters on Windows through this package's API and its `tun` subpackage, with the embedded `wintun.dll` loaded from memory. It is a module of its own, which replaces `github.com/wzshiming/wintun` with `../`; run both from an elevated prompt with `WINTUN_E2E=1`, or they skip.
 
 ```sh
 WINTUN_E2E=1 go test -C e2e -v .
@@ -103,10 +103,11 @@ WINTUN_E2E=1 go test -C e2e -v .
 For an IDE that should see both modules at once, a local `go work init . ./e2e` is ignored by git and not committed.
 
 - `TestE2EAdapter`: creates an adapter with the requested name and GUID, checks its LUID names an interface with that GUID and name and that the running driver is the DLL's version, `Version()`, starts a session and checks its read-wait event, assigns it 198.18.0.5/30, has the session read a UDP datagram the host sends to 198.18.0.6 and send back one that the sending socket receives, ends the session, and closes the adapter, then waits for it to go away, except for amd64 on arm64 Windows, which cannot remove it.
+- `TestE2ETUN`: proves the `tun` subpackage's `tun.Device` carries UDP both ways and is removed on `Close`, as described under [TUN device](#tun-device).
 
 The DLL's Authenticode signature is checked by the root package's `TestEmbeddedDLLIsTrustedAndSignedByWireGuard`, which needs no privileges.
 
-CI fails unless `TestE2EAdapter` passes on `windows-latest` with amd64 (`-race`) and 386 under WOW64, and on `windows-11-arm` with arm64 and with amd64 and 386 under emulation, so each DLL runs on every Windows it supports.
+CI fails unless both `TestE2EAdapter` and `TestE2ETUN` pass on `windows-latest` with amd64 (`-race`) and 386 under WOW64, and on `windows-11-arm` with arm64 and with amd64 and 386 under emulation, so each DLL runs on every Windows it supports.
 
 ## License
 
