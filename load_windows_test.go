@@ -3,7 +3,6 @@ package wintun
 import (
 	"crypto/sha256"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,37 +14,23 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// TestMain fails any test that reaches LoadLibrary without faking it, so no unit test maps wintun.dll into the process.
-func TestMain(m *testing.M) {
-	loadLibrary = func(path string) (windows.Handle, error) {
-		return 0, fmt.Errorf("tt: LoadLibrary(%s) is not faked", path)
-	}
-	os.Exit(m.Run())
-}
-
-// ttWintunUse points CacheDir at a directory below cache, which stands for the user cache, forgets any loaded module and fakes LoadLibrary for t; it returns where wintun.dll goes and the paths t loads.
-func ttWintunUse(t *testing.T, cache string) (string, *[]string) {
+// ttWintunUse returns a loader that extracts below cache, which stands for the user cache, and fakes LoadLibrary; it also returns where wintun.dll goes and the paths the loader loads.
+func ttWintunUse(t *testing.T, cache string) (*loader, string, *[]string) {
 	t.Helper()
 	if !Embedded {
 		t.Skipf("no wintun.dll embedded for %s", runtime.GOARCH)
 	}
 	loaded := new([]string)
-	mu.Lock()
-	prevCache, prevModule, prevHook, prevLoad := CacheDir, module, beforeOpen, loadLibrary
-	CacheDir = func() (string, error) { return filepath.Join(cache, "wintun"), nil }
-	module = 0
-	// Load calls this under mu.
-	loadLibrary = func(path string) (windows.Handle, error) {
-		*loaded = append(*loaded, path)
-		return windows.Handle(len(*loaded)), nil
+	l := &loader{
+		cacheDir: func() (string, error) { return filepath.Join(cache, "wintun"), nil },
+		// load calls this under l.mu.
+		loadLibrary: func(path string) (windows.Handle, error) {
+			*loaded = append(*loaded, path)
+			return windows.Handle(len(*loaded)), nil
+		},
+		beforeOpen: func(string) {},
 	}
-	mu.Unlock()
-	t.Cleanup(func() {
-		mu.Lock()
-		defer mu.Unlock()
-		CacheDir, module, beforeOpen, loadLibrary = prevCache, prevModule, prevHook, prevLoad
-	})
-	return filepath.Join(append(append([]string{cache}, ttWintunSubdirs()...), "wintun.dll")...), loaded
+	return l, filepath.Join(append(append([]string{cache}, ttWintunSubdirs()...), "wintun.dll")...), loaded
 }
 
 // ttWintunSubdirs are the directories Load creates below the user cache.
@@ -80,12 +65,12 @@ func ttWintunJunction(t *testing.T, link, target string) {
 	t.Cleanup(func() { os.Remove(link) })
 }
 
-func ttWintunWantRefused(t *testing.T, err error, target string, loaded []string) {
+func ttWintunWantRefused(t *testing.T, l *loader, err error, target string, loaded []string) {
 	t.Helper()
 	if err == nil || !strings.Contains(err.Error(), "reparse point") {
 		t.Errorf("Load = %v, want an error naming a reparse point", err)
 	}
-	if module != 0 || len(loaded) != 0 {
+	if l.module != 0 || len(loaded) != 0 {
 		t.Errorf("Load loaded %q through a junction", loaded)
 	}
 	if names := ttWintunReadDir(t, target); len(names) != 0 {
@@ -105,26 +90,26 @@ func ttWintunWantEmbedded(t *testing.T, path string) {
 }
 
 func TestLoadWritesTheEmbeddedDLLAndLoadsIt(t *testing.T) {
-	path, loaded := ttWintunUse(t, t.TempDir())
-	if err := Load(); err != nil {
+	l, path, loaded := ttWintunUse(t, t.TempDir())
+	if err := l.load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	ttWintunWantEmbedded(t, path)
 	ttWintunWantLoaded(t, *loaded, path)
-	if module == 0 {
+	if l.module == 0 {
 		t.Error("Load kept no module")
 	}
 }
 
 func TestLoadReplacesAWrongDLL(t *testing.T) {
-	path, loaded := ttWintunUse(t, t.TempDir())
+	l, path, loaded := ttWintunUse(t, t.TempDir())
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte("not wintun"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := Load(); err != nil {
+	if err := l.load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	ttWintunWantEmbedded(t, path)
@@ -132,25 +117,23 @@ func TestLoadReplacesAWrongDLL(t *testing.T) {
 }
 
 func TestLoadAgainKeepsTheFile(t *testing.T) {
-	path, loaded := ttWintunUse(t, t.TempDir())
-	if err := Load(); err != nil {
+	l, path, loaded := ttWintunUse(t, t.TempDir())
+	if err := l.load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	before, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Load(); err != nil {
+	if err := l.load(); err != nil {
 		t.Fatalf("second Load: %v", err)
 	}
 	if len(*loaded) != 1 {
 		t.Errorf("loaded %q, want the second Load to reuse the module", *loaded)
 	}
-	// Forgetting the module provisions and loads again, now over the extracted file.
-	mu.Lock()
-	module = 0
-	mu.Unlock()
-	if err := Load(); err != nil {
+	// A loader without a module, as in a new process, provisions and loads again, now over the extracted file.
+	fresh := &loader{cacheDir: l.cacheDir, loadLibrary: l.loadLibrary, beforeOpen: l.beforeOpen}
+	if err := fresh.load(); err != nil {
 		t.Fatalf("Load after forgetting the module: %v", err)
 	}
 	after, err := os.Stat(path)
@@ -163,21 +146,21 @@ func TestLoadAgainKeepsTheFile(t *testing.T) {
 }
 
 func TestLoadRefusesAFileChangedBeforeVerification(t *testing.T) {
-	path, loaded := ttWintunUse(t, t.TempDir())
-	beforeOpen = func(path string) {
+	l, path, loaded := ttWintunUse(t, t.TempDir())
+	l.beforeOpen = func(path string) {
 		if err := os.WriteFile(path, []byte("swapped"), 0o644); err != nil {
 			t.Errorf("swap %s: %v", path, err)
 		}
 	}
-	err := Load()
+	err := l.load()
 	if err == nil || !strings.Contains(err.Error(), "differs") {
 		t.Fatalf("Load = %v, want an error saying the file differs", err)
 	}
-	if module != 0 || len(*loaded) != 0 {
+	if l.module != 0 || len(*loaded) != 0 {
 		t.Fatalf("Load loaded %q from a file that failed verification", *loaded)
 	}
-	beforeOpen = func(string) {}
-	if err := Load(); err != nil {
+	l.beforeOpen = func(string) {}
+	if err := l.load(); err != nil {
 		t.Fatalf("Load retried after a failure: %v", err)
 	}
 	ttWintunWantEmbedded(t, path)
@@ -188,35 +171,35 @@ func TestLoadRefusesAJunctionAtAnOwnedDirectory(t *testing.T) {
 	for i, name := range ttWintunSubdirs() {
 		t.Run(name, func(t *testing.T) {
 			cache, target := t.TempDir(), t.TempDir()
-			_, loaded := ttWintunUse(t, cache)
+			l, _, loaded := ttWintunUse(t, cache)
 			parent := filepath.Join(append([]string{cache}, ttWintunSubdirs()[:i]...)...)
 			if err := os.MkdirAll(parent, 0o755); err != nil {
 				t.Fatal(err)
 			}
 			ttWintunJunction(t, filepath.Join(parent, name), target)
-			err := Load()
-			ttWintunWantRefused(t, err, target, *loaded)
+			err := l.load()
+			ttWintunWantRefused(t, l, err, target, *loaded)
 		})
 	}
 }
 
 func TestLoadRefusesAJunctionAtTheDLL(t *testing.T) {
 	cache, target := t.TempDir(), t.TempDir()
-	path, loaded := ttWintunUse(t, cache)
+	l, path, loaded := ttWintunUse(t, cache)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	ttWintunJunction(t, path, target)
-	err := Load()
-	ttWintunWantRefused(t, err, target, *loaded)
+	err := l.load()
+	ttWintunWantRefused(t, l, err, target, *loaded)
 }
 
 func TestLoadAcceptsARedirectedUserCache(t *testing.T) {
 	target := t.TempDir()
 	cache := filepath.Join(t.TempDir(), "redirected-cache")
 	ttWintunJunction(t, cache, target)
-	path, loaded := ttWintunUse(t, cache)
-	if err := Load(); err != nil {
+	l, path, loaded := ttWintunUse(t, cache)
+	if err := l.load(); err != nil {
 		t.Fatalf("Load under a redirected cache: %v", err)
 	}
 	ttWintunWantEmbedded(t, path)
@@ -227,16 +210,16 @@ func TestLoadLoadsTheFinalPathOfTheVerifiedFile(t *testing.T) {
 	target := t.TempDir()
 	cache := filepath.Join(t.TempDir(), "redirected-cache")
 	ttWintunJunction(t, cache, target)
-	path, loaded := ttWintunUse(t, cache)
-	fake := loadLibrary
-	loadLibrary = func(p string) (windows.Handle, error) {
+	l, path, loaded := ttWintunUse(t, cache)
+	fake := l.loadLibrary
+	l.loadLibrary = func(p string) (windows.Handle, error) {
 		if f, err := os.OpenFile(p, os.O_WRONLY, 0); err == nil {
 			f.Close()
 			t.Errorf("%s opened for writing while being loaded, want the verifying handle still denying it", p)
 		}
 		return fake(p)
 	}
-	if err := Load(); err != nil {
+	if err := l.load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	ttWintunWantLoaded(t, *loaded, path)
@@ -246,11 +229,11 @@ func TestLoadLoadsTheFinalPathOfTheVerifiedFile(t *testing.T) {
 }
 
 func TestLoadConcurrentCallsAllSucceed(t *testing.T) {
-	path, loaded := ttWintunUse(t, t.TempDir())
+	l, path, loaded := ttWintunUse(t, t.TempDir())
 	var wg sync.WaitGroup
 	errs := make([]error, 8)
 	for i := range errs {
-		wg.Go(func() { errs[i] = Load() })
+		wg.Go(func() { errs[i] = l.load() })
 	}
 	wg.Wait()
 	if err := errors.Join(errs...); err != nil {

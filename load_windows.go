@@ -12,31 +12,45 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// beforeOpen runs between extracting wintun.dll and opening it for verification; tests swap the file there.
-var beforeOpen = func(path string) {}
+// loader extracts, verifies and loads wintun.dll once; Load uses defaultLoader, while tests build their own.
+type loader struct {
+	// cacheDir returns the directory below which wintun.dll is extracted.
+	cacheDir func() (string, error)
+	// loadLibrary loads the DLL at an absolute path.
+	loadLibrary func(path string) (windows.Handle, error)
+	// beforeOpen runs between extracting wintun.dll and opening it for verification; tests swap the file there.
+	beforeOpen func(path string)
 
-// loadLibrary loads the DLL at the absolute path, resolving its imports from System32 only.
-var loadLibrary = func(path string) (windows.Handle, error) {
-	return windows.LoadLibraryEx(path, 0, windows.LOAD_LIBRARY_SEARCH_SYSTEM32)
-}
-
-var (
 	mu sync.Mutex
 	// module is the loaded wintun.dll, which golang.zx2c4.com/wintun then finds by its base name.
 	module windows.Handle
-)
+}
+
+// defaultLoader reads CacheDir on each call, so a program may replace it before Load.
+var defaultLoader = &loader{
+	cacheDir: func() (string, error) { return CacheDir() },
+	// Resolve the DLL's own imports from System32 only.
+	loadLibrary: func(path string) (windows.Handle, error) {
+		return windows.LoadLibraryEx(path, 0, windows.LOAD_LIBRARY_SEARCH_SYSTEM32)
+	},
+	beforeOpen: func(string) {},
+}
 
 // Load extracts the embedded wintun.dll and loads it once per process.
 func Load() error {
+	return defaultLoader.load()
+}
+
+func (l *loader) load() error {
 	if !Embedded {
 		return fmt.Errorf("wintun: no wintun.dll for %s: %w", runtime.GOARCH, errors.ErrUnsupported)
 	}
-	mu.Lock()
-	defer mu.Unlock()
-	if module != 0 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.module != 0 {
 		return nil
 	}
-	cache, err := CacheDir()
+	cache, err := l.cacheDir()
 	if err != nil {
 		return fmt.Errorf("wintun: wintun.dll directory: %w", err)
 	}
@@ -45,17 +59,17 @@ func Load() error {
 	if err != nil {
 		return fmt.Errorf("wintun: extract wintun.dll: %w", err)
 	}
-	beforeOpen(path)
-	h, err := loadVerified(path, dll)
+	l.beforeOpen(path)
+	h, err := l.loadVerified(path, dll)
 	if err != nil {
 		return fmt.Errorf("wintun: load %s: %w", path, err)
 	}
-	module = h
+	l.module = h
 	return nil
 }
 
 // loadVerified loads the DLL at path if it holds want, keeping the file open without write or delete sharing from the check until it is loaded.
-func loadVerified(path string, want []byte) (windows.Handle, error) {
+func (l *loader) loadVerified(path string, want []byte) (windows.Handle, error) {
 	name, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return 0, err
@@ -78,7 +92,7 @@ func loadVerified(path string, want []byte) (windows.Handle, error) {
 	if err != nil {
 		return 0, err
 	}
-	return loadLibrary(final)
+	return l.loadLibrary(final)
 }
 
 // GetFinalPathNameByHandle flags golang.org/x/sys/windows does not define.
