@@ -25,9 +25,9 @@ func open() (tun.Device, error) { // golang.zx2c4.com/wireguard/tun
 ## API
 
 - `const Version = "0.14.1"` — the Wintun version of the embedded DLLs.
-- `const Embedded bool` — Windows only: whether this build carries a `wintun.dll`; true on 386, amd64 and arm64.
+- `const Embedded bool` — whether this build carries a `wintun.dll`: true on Windows (386, amd64 and arm64), false elsewhere.
 - `var CacheDir func() (string, error)` — the directory the embedded `wintun.dll` is extracted into on Windows, as `<GOARCH>-<hash>/wintun.dll` (default `os.UserCacheDir()/wintun`); programs may replace it.
-- `func Load() error` — Windows only: extracts the embedded `wintun.dll` under `CacheDir()`, verifies it and loads it once per process; wraps `errors.ErrUnsupported` when none is embedded.
+- `func Load() error` — on Windows, extracts the embedded `wintun.dll` under `CacheDir()`, verifies it and loads it for the life of the process; once a call succeeds later calls do nothing, and after a failure the next call tries again. Elsewhere it returns an error wrapping `errors.ErrUnsupported`. Its errors start with `wintun: `.
 
 `Load` writes the DLL to `CacheDir()/<GOARCH>-<first 16 hex digits of its SHA-256>/wintun.dll` through a temporary file, unless that file already holds it. It refuses a junction, symbolic link or other reparse point at `CacheDir()`, below it or at the DLL, which another process of the same user could aim elsewhere, while the parent of `CacheDir()` may be redirected. It then opens the file without write or delete sharing, compares it with the embedded bytes and, still holding it open, loads the final path of that handle, resolving the DLL's own imports from System32 only. `golang.zx2c4.com/wintun` loads `wintun.dll` by its base name, which Windows resolves to that module.
 
