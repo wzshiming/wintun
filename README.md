@@ -42,7 +42,8 @@ The DLLs are the unmodified builds of Wintun 0.14.1, signed by WireGuard LLC, fr
 | `arm64` | [bin/arm64/wintun.dll](bin/arm64/wintun.dll) | `wintun/bin/arm64/wintun.dll` | `f7ba89005544be9d85231a9e0d5f23b2d15b3311667e2dad0debd344918a3f80` |
 | | [bin/LICENSE.txt](bin/LICENSE.txt) | `wintun/LICENSE.txt` | `183adac21e7d96c508c8fd34d394b7b6708bc81564ad1bad61ab66143a008cd2` |
 
-- Each DLL carries the Wintun 0.14 driver for every Windows it can run on: the 386 DLL for x86, amd64 and arm64 Windows, the amd64 DLL for amd64 and arm64 Windows, the arm64 DLL for arm64 Windows. Under WOW64 or x64 emulation it hands adapter creation to the native DLL it also carries, run through `rundll32`.
+- Each DLL carries the Wintun 0.14 driver for every Windows it can run on: the 386 DLL for x86, amd64 and arm64 Windows, the amd64 DLL for amd64 and arm64 Windows, the arm64 DLL for arm64 Windows. Under WOW64 or x64 emulation it removes adapters through the native DLL it also carries, run with `%WINDIR%\Sysnative\rundll32.exe`.
+- Only WOW64 processes have `Sysnative`, so an amd64 build on arm64 Windows creates and uses adapters but cannot remove them; build for arm64, or 386, there.
 - The zip's `wintun/bin/arm/wintun.dll` is left out, as Go removed `windows/arm` in Go 1.26, and so are `wintun/include/wintun.h` and `wintun/README.md`, as `golang.zx2c4.com/wintun` binds the DLL's exports by name.
 - `go test` checks that each DLL is a PE DLL for its GOARCH whose Authenticode signer is WireGuard LLC, and that this table holds the DLLs' hashes. CI's `dlls` job runs `go generate` again and fails on any difference, so the committed files are those of the release.
 
@@ -63,7 +64,7 @@ WINTUN_E2E=1 go test ./e2e -v
 
 - `TestE2ELoad`: `Load` loads the DLL from under `CacheDir()`, every function of `wintun.h` resolves in it, and `golang.zx2c4.com/wintun` finds it by its base name and reads its version, `Version`.
 - `TestE2ESignature`: `WinVerifyTrust` trusts the Authenticode signature of the extracted DLL.
-- `TestE2EAdapter` needs an elevated process: it creates an adapter with the requested name and GUID, checks the running driver is the DLL's, assigns it 198.18.0.5/30, has the session read a UDP datagram the host sends to 198.18.0.6 and write back one that the sending socket receives, and removes the adapter.
+- `TestE2EAdapter` needs an elevated process: it creates an adapter with the requested name and GUID, checks the running driver is the DLL's, assigns it 198.18.0.5/30, has the session read a UDP datagram the host sends to 198.18.0.6 and write back one that the sending socket receives, and removes the adapter, except for amd64 on arm64 Windows, which cannot.
 
 CI fails unless all three pass on `windows-latest` with amd64 (`-race`) and 386 under WOW64, and on `windows-11-arm` with arm64 and with amd64 and 386 under emulation, so each DLL runs on every Windows it supports.
 

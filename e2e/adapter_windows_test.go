@@ -2,11 +2,13 @@ package e2e
 
 import (
 	"bytes"
+	"debug/pe"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
 	"net/netip"
+	"runtime"
 	"syscall"
 	"testing"
 	"time"
@@ -188,6 +190,19 @@ func ttSend(t *testing.T, session zxwintun.Session, packet []byte) {
 	session.SendPacket(buf)
 }
 
+// ttEmulatedOnARM64 reports whether this is an amd64 process under emulation on arm64 Windows.
+func ttEmulatedOnARM64(t *testing.T) bool {
+	t.Helper()
+	if runtime.GOARCH != "amd64" {
+		return false
+	}
+	var process, native uint16
+	if err := windows.IsWow64Process2(windows.CurrentProcess(), &process, &native); err != nil {
+		t.Fatalf("IsWow64Process2: %v", err)
+	}
+	return native == pe.IMAGE_FILE_MACHINE_ARM64
+}
+
 // TestE2EAdapter creates an adapter with the embedded DLL, sends a UDP datagram out through it and one back in, and removes it.
 func TestE2EAdapter(t *testing.T) {
 	ttGate(t)
@@ -273,6 +288,11 @@ func TestE2EAdapter(t *testing.T) {
 	// WintunCloseAdapter returns nothing, so the error Close derives from it means nothing.
 	adapter.Close()
 	open = false
+	if ttEmulatedOnARM64(t) {
+		// Wintun 0.14.1 removes it through %WINDIR%\Sysnative\rundll32.exe, which only WOW64 processes have.
+		t.Log("an amd64 process on arm64 Windows cannot remove its adapter; not waiting for it to go away")
+		return
+	}
 	ttWaitFor(t, 10*time.Second, func() bool {
 		_, err := ttLUIDIndex(luid)
 		return err != nil
