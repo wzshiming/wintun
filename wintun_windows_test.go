@@ -197,6 +197,18 @@ func TestDLLFailureWithoutALastErrorIsEINVAL(t *testing.T) {
 	}
 }
 
+func TestSessionKeepsTheAdapterItWasStartedFrom(t *testing.T) {
+	ttStub(t, procWintunStartSession, func(_, _ uintptr) uintptr { return 2 })
+	adapter := ttAdapter(1)
+	session, err := adapter.StartSession(RingCapacityMin)
+	if err != nil {
+		t.Fatalf("StartSession = %v, want a session", err)
+	}
+	if session.adapter != adapter {
+		t.Errorf("session.adapter = %p, want the adapter %p it was started from", session.adapter, adapter)
+	}
+}
+
 func TestRunningVersionResolvesFromAModuleOutsideTheLoaderList(t *testing.T) {
 	v, err := RunningVersion()
 	if err := procWintunGetRunningDriverVersion.Find(); err != nil {

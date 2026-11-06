@@ -6,6 +6,7 @@
 package wintun
 
 import (
+	"runtime"
 	"sync/atomic"
 	"syscall"
 	"unsafe"
@@ -13,8 +14,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// Session is a session on an Adapter; it keeps that adapter alive, and End does not close it.
 type Session struct {
-	handle atomic.Uintptr
+	handle  atomic.Uintptr
+	adapter *Adapter
 }
 
 // live returns the session's handle, or 0 for an ended, zero or nil Session.
@@ -64,10 +67,11 @@ func (wintun *Adapter) StartSession(capacity uint32) (*Session, error) {
 		return nil, err
 	}
 	r0, _, e1 := syscall.Syscall(addr, 2, handle, uintptr(capacity), 0)
+	runtime.KeepAlive(wintun)
 	if r0 == 0 {
 		return nil, errnoErr(e1)
 	}
-	session := new(Session)
+	session := &Session{adapter: wintun}
 	session.handle.Store(r0)
 	return session, nil
 }
@@ -84,6 +88,7 @@ func (session *Session) End() {
 	}
 	if handle := session.handle.Swap(0); handle != 0 {
 		syscall.Syscall(addr, 1, handle, 0, 0)
+		runtime.KeepAlive(session)
 	}
 }
 
@@ -98,6 +103,7 @@ func (session *Session) ReadWaitEvent() (handle windows.Handle) {
 		return 0
 	}
 	r0, _, _ := syscall.Syscall(addr, 1, live, 0, 0)
+	runtime.KeepAlive(session)
 	handle = windows.Handle(r0)
 	return
 }
@@ -114,6 +120,7 @@ func (session *Session) ReceivePacket() (packet []byte, err error) {
 	}
 	var packetSize uint32
 	r0, _, e1 := syscall.Syscall(addr, 2, handle, uintptr(unsafe.Pointer(&packetSize)), 0)
+	runtime.KeepAlive(session)
 	if r0 == 0 {
 		err = errnoErr(e1)
 		return
@@ -132,6 +139,7 @@ func (session *Session) ReleaseReceivePacket(packet []byte) {
 	if addr, err := procWintunReleaseReceivePacket.address(); err == nil {
 		// gc keeps the DLL's address in the data word of a 0-byte packet too, which SliceData returns.
 		syscall.Syscall(addr, 2, handle, uintptr(unsafe.Pointer(unsafe.SliceData(packet))), 0)
+		runtime.KeepAlive(session)
 	}
 }
 
@@ -150,6 +158,7 @@ func (session *Session) AllocateSendPacket(packetSize int) (packet []byte, err e
 		return nil, err
 	}
 	r0, _, e1 := syscall.Syscall(addr, 2, handle, uintptr(packetSize), 0)
+	runtime.KeepAlive(session)
 	if r0 == 0 {
 		err = errnoErr(e1)
 		return
@@ -167,5 +176,6 @@ func (session *Session) SendPacket(packet []byte) {
 	}
 	if addr, err := procWintunSendPacket.address(); err == nil {
 		syscall.Syscall(addr, 2, handle, uintptr(unsafe.Pointer(unsafe.SliceData(packet))), 0)
+		runtime.KeepAlive(session)
 	}
 }

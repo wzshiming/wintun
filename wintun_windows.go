@@ -202,6 +202,7 @@ func (wintun *Adapter) LUID() (luid uint64) {
 		return 0
 	}
 	syscall.Syscall(addr, 2, handle, uintptr(unsafe.Pointer(&luid)), 0)
+	runtime.KeepAlive(wintun)
 	return
 }
 
