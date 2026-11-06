@@ -29,7 +29,7 @@ var (
 // Load extracts the embedded wintun.dll and loads it once per process.
 func Load() error {
 	if !Embedded {
-		return fmt.Errorf("tun: no wintun.dll for %s: %w", runtime.GOARCH, errors.ErrUnsupported)
+		return fmt.Errorf("wintun: no wintun.dll for %s: %w", runtime.GOARCH, errors.ErrUnsupported)
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -38,17 +38,17 @@ func Load() error {
 	}
 	cache, err := CacheDir()
 	if err != nil {
-		return fmt.Errorf("tun: wintun.dll directory: %w", err)
+		return fmt.Errorf("wintun: wintun.dll directory: %w", err)
 	}
 	root, sub := location(cache, runtime.GOARCH, dll)
 	path, err := provisionFile(root, sub, "wintun.dll", dll, rejectReparsePoint)
 	if err != nil {
-		return fmt.Errorf("tun: extract wintun.dll: %w", err)
+		return fmt.Errorf("wintun: extract wintun.dll: %w", err)
 	}
 	beforeOpen(path)
 	h, err := loadVerified(path, dll)
 	if err != nil {
-		return fmt.Errorf("tun: load %s: %w", path, err)
+		return fmt.Errorf("wintun: load %s: %w", path, err)
 	}
 	module = h
 	return nil

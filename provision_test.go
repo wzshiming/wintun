@@ -107,13 +107,13 @@ func TestProvisionFileLeavesIdenticalContentUntouched(t *testing.T) {
 	}
 }
 
-func TestCacheDirDefaultsToTunUnderTheUserCache(t *testing.T) {
+func TestCacheDirDefaultsToWintunUnderTheUserCache(t *testing.T) {
 	user, err := os.UserCacheDir()
 	if err != nil {
 		t.Skipf("no user cache directory: %v", err)
 	}
-	if got, err := CacheDir(); err != nil || got != filepath.Join(user, "tun") {
-		t.Errorf("CacheDir = %q, %v; want %q", got, err, filepath.Join(user, "tun"))
+	if got, err := CacheDir(); err != nil || got != filepath.Join(user, "wintun") {
+		t.Errorf("CacheDir = %q, %v; want %q", got, err, filepath.Join(user, "wintun"))
 	}
 }
 
@@ -122,7 +122,7 @@ func TestLocationKeysTheDLLByArchAndHashUnderCacheDir(t *testing.T) {
 	sum := sha256.Sum256(dll)
 	cache := filepath.Join("user-cache", "app")
 	root, sub := location(cache, "arm64", dll)
-	if want := []string{"app", "wintun", "arm64-" + hex.EncodeToString(sum[:])[:16]}; root != "user-cache" || !slices.Equal(sub, want) {
+	if want := []string{"app", "arm64-" + hex.EncodeToString(sum[:])[:16]}; root != "user-cache" || !slices.Equal(sub, want) {
 		t.Errorf("location = %q, %q; want user-cache, %q", root, sub, want)
 	}
 }

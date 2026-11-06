@@ -32,7 +32,7 @@ func ttWintunUse(t *testing.T, cache string) (string, *[]string) {
 	loaded := new([]string)
 	mu.Lock()
 	prevCache, prevModule, prevHook, prevLoad := CacheDir, module, beforeOpen, loadLibrary
-	CacheDir = func() (string, error) { return filepath.Join(cache, "tun"), nil }
+	CacheDir = func() (string, error) { return filepath.Join(cache, "wintun"), nil }
 	module = 0
 	// Load calls this under mu.
 	loadLibrary = func(path string) (windows.Handle, error) {
@@ -50,7 +50,7 @@ func ttWintunUse(t *testing.T, cache string) (string, *[]string) {
 
 // ttWintunSubdirs are the directories Load creates below the user cache.
 func ttWintunSubdirs() []string {
-	_, sub := location(filepath.Join("cache", "tun"), runtime.GOARCH, dll)
+	_, sub := location(filepath.Join("cache", "wintun"), runtime.GOARCH, dll)
 	return sub
 }
 

@@ -11,21 +11,21 @@ import (
 	"path/filepath"
 )
 
-// CacheDir returns the cache directory, which on Windows holds the extracted wintun.dll; programs may replace it.
+// CacheDir returns the directory that on Windows holds the extracted wintun.dll, below <GOARCH>-<hash>; programs may replace it.
 // Its parent is taken as given, while the directory itself and those below it are created and checked.
 var CacheDir = func() (string, error) {
 	dir, err := os.UserCacheDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "tun"), nil
+	return filepath.Join(dir, "wintun"), nil
 }
 
 // location splits where the wintun.dll of goarch whose bytes are dll goes under cacheDir into the unchecked root and the directories below it.
 func location(cacheDir, goarch string, dll []byte) (root string, sub []string) {
 	sum := sha256.Sum256(dll)
 	cacheDir = filepath.Clean(cacheDir)
-	return filepath.Dir(cacheDir), []string{filepath.Base(cacheDir), "wintun", goarch + "-" + hex.EncodeToString(sum[:])[:16]}
+	return filepath.Dir(cacheDir), []string{filepath.Base(cacheDir), goarch + "-" + hex.EncodeToString(sum[:])[:16]}
 }
 
 // provisionFile makes root/sub.../name hold data, writing a temporary file and renaming it over the target unless it already does.
