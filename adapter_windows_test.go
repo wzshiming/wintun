@@ -291,11 +291,42 @@ func TestE2EAdapter(t *testing.T) {
 		return err == nil && bytes.Equal(buf[:n], reply)
 	}, "the socket to read the datagram the session wrote")
 
+	// Left unsent, the largest packet holds the send ring until End, so it is allocated last.
+	if packet, err := session.AllocateSendPacket(wintun.PacketSizeMax); err != nil || len(packet) != wintun.PacketSizeMax {
+		t.Errorf("AllocateSendPacket(PacketSizeMax) = %d bytes, %v; want %d bytes", len(packet), err, wintun.PacketSizeMax)
+	}
+	session.End()
 	session.End()
 	running = false
-	// WintunCloseAdapter returns nothing, so the error Close derives from it means nothing.
-	adapter.Close()
+	if _, err := session.ReceivePacket(); !errors.Is(err, windows.ERROR_HANDLE_EOF) {
+		t.Errorf("ReceivePacket after End = %v, want ERROR_HANDLE_EOF", err)
+	}
+	if _, err := session.AllocateSendPacket(1); !errors.Is(err, windows.ERROR_HANDLE_EOF) {
+		t.Errorf("AllocateSendPacket after End = %v, want ERROR_HANDLE_EOF", err)
+	}
+	if event := session.ReadWaitEvent(); event != 0 {
+		t.Errorf("ReadWaitEvent after End = %#x, want 0", event)
+	}
+
+	closeErrs := make(chan error, 8)
+	for range cap(closeErrs) {
+		go func() { closeErrs <- adapter.Close() }()
+	}
+	for i := range cap(closeErrs) {
+		if err := <-closeErrs; err != nil {
+			t.Errorf("concurrent Close #%d = %v, want nil", i+1, err)
+		}
+	}
 	open = false
+	if err := adapter.Close(); err != nil {
+		t.Errorf("Close of a closed adapter = %v, want nil", err)
+	}
+	if got := adapter.LUID(); got != 0 {
+		t.Errorf("LUID after Close = %#x, want 0", got)
+	}
+	if _, err := adapter.StartSession(0x400000); !errors.Is(err, windows.ERROR_INVALID_HANDLE) {
+		t.Errorf("StartSession after Close = %v, want ERROR_INVALID_HANDLE", err)
+	}
 	if ttEmulatedOnARM64(t) {
 		// The embedded Wintun Version removes it through %WINDIR%\Sysnative\rundll32.exe, which only WOW64 processes have.
 		t.Log("an amd64 process on arm64 Windows cannot remove its adapter; not waiting for it to go away")
