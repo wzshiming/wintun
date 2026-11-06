@@ -16,11 +16,43 @@ const (
 	memPrivate = 0x20000
 )
 
-func queryMemory(t *testing.T, addr uintptr) windows.MemoryBasicInformation {
+// memoryBasicInformation is MEMORY_BASIC_INFORMATION on every Windows port: x/sys/windows'
+// MemoryBasicInformation always has the 64-bit PartitionId, which 32-bit Windows lacks.
+type memoryBasicInformation struct {
+	BaseAddress       uintptr
+	AllocationBase    uintptr
+	AllocationProtect uint32
+	PartitionId       [unsafe.Sizeof(uintptr(0))/4 - 1]uint16 // one WORD on 64-bit Windows, none on 32-bit
+	RegionSize        uintptr
+	State             uint32
+	Protect           uint32
+	Type              uint32
+}
+
+var procVirtualQuery = windows.NewLazySystemDLL("kernel32.dll").NewProc("VirtualQuery")
+
+func TestMemoryBasicInformationIsWhatVirtualQueryWrites(t *testing.T) {
+	want := uintptr(48)
+	if unsafe.Sizeof(uintptr(0)) == 4 {
+		want = 28
+	}
+	if got := unsafe.Sizeof(memoryBasicInformation{}); got != want {
+		t.Errorf("memoryBasicInformation is %d bytes, want MEMORY_BASIC_INFORMATION's %d", got, want)
+	}
+	var local byte
+	queryMemory(t, uintptr(unsafe.Pointer(&local)))
+}
+
+// queryMemory fails the test unless VirtualQuery fills exactly a memoryBasicInformation.
+func queryMemory(t *testing.T, addr uintptr) memoryBasicInformation {
 	t.Helper()
-	var mbi windows.MemoryBasicInformation
-	if err := windows.VirtualQuery(addr, &mbi, unsafe.Sizeof(mbi)); err != nil {
+	var mbi memoryBasicInformation
+	n, _, err := procVirtualQuery.Call(addr, uintptr(unsafe.Pointer(&mbi)), unsafe.Sizeof(mbi))
+	if n == 0 {
 		t.Fatalf("VirtualQuery(%#x): %v", addr, err)
+	}
+	if n != unsafe.Sizeof(mbi) {
+		t.Fatalf("VirtualQuery(%#x) wrote %d bytes, but memoryBasicInformation is %d: its layout does not match MEMORY_BASIC_INFORMATION", addr, n, unsafe.Sizeof(mbi))
 	}
 	return mbi
 }
