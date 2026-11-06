@@ -14,9 +14,5 @@
 # Output of the go coverage tool
 *.out
 
-# A local workspace joining the root and e2e modules
-go.work
-go.work.sum
-
 # macOS Finder metadata
 .DS_Store
