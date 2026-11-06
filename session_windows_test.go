@@ -56,6 +56,52 @@ func ttCount(t *testing.T, n *atomic.Int32, procs ...*lazyProc) {
 	}
 }
 
+func TestPacketsHandBackTheAddressTheDLLReturned(t *testing.T) {
+	ring, err := windows.VirtualAlloc(0, PacketSizeMax, windows.MEM_RESERVE|windows.MEM_COMMIT, windows.PAGE_READWRITE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.VirtualFree(ring, 0, windows.MEM_RELEASE)
+	var size uint32
+	var allocated, released, sent uintptr
+	ttStub(t, procWintunReceivePacket, func(_ uintptr, packetSize *uint32) uintptr {
+		*packetSize = size
+		return ring
+	})
+	ttStub(t, procWintunAllocateSendPacket, func(_, packetSize uintptr) uintptr {
+		allocated = packetSize
+		return ring
+	})
+	ttStub(t, procWintunReleaseReceivePacket, func(_, packet uintptr) uintptr {
+		released = packet
+		return 0
+	})
+	ttStub(t, procWintunSendPacket, func(_, packet uintptr) uintptr {
+		sent = packet
+		return 0
+	})
+	session := ttSession(1)
+	for _, n := range []int{0, PacketSizeMax} {
+		size, released, sent = uint32(n), 0, 0
+		packet, err := session.ReceivePacket()
+		if err != nil || len(packet) != n {
+			t.Fatalf("ReceivePacket of %d bytes = %d bytes, %v", n, len(packet), err)
+		}
+		session.ReleaseReceivePacket(packet)
+		if released != ring {
+			t.Errorf("ReleaseReceivePacket of %d bytes handed %#x to the DLL, want %#x", n, released, ring)
+		}
+		packet, err = session.AllocateSendPacket(n)
+		if err != nil || len(packet) != n || allocated != uintptr(n) {
+			t.Fatalf("AllocateSendPacket(%d) = %d bytes, %v, asking the DLL for %d", n, len(packet), err, allocated)
+		}
+		session.SendPacket(packet)
+		if sent != ring {
+			t.Errorf("SendPacket of %d bytes handed %#x to the DLL, want %#x", n, sent, ring)
+		}
+	}
+}
+
 func TestConcurrentClosesHandTheHandleToTheDLLOnce(t *testing.T) {
 	var closed atomic.Uintptr
 	ttStub(t, procWintunCloseAdapter, func(handle uintptr) uintptr {

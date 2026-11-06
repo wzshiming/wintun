@@ -82,8 +82,16 @@ func TestLazyHelper(t *testing.T) {
 		session.End()
 		ttEndedSession(t, name, session)
 	}
+	live := ttSession(1)
+	for _, n := range []int{-1, PacketSizeMax + 1} {
+		if packet, err := live.AllocateSendPacket(n); packet != nil || !errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
+			t.Errorf("AllocateSendPacket(%d) = %v, %v; want nil, ERROR_INVALID_PARAMETER", n, packet, err)
+		}
+	}
+	live.ReleaseReceivePacket(nil)
+	live.SendPacket(nil)
 	if modwintun.module.Load() != nil {
-		t.Error("a nil or zero Adapter or Session loaded wintun.dll")
+		t.Error("a nil or zero Adapter or Session, a size outside a packet or a nil packet loaded wintun.dll")
 	}
 }
 

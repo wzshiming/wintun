@@ -122,20 +122,25 @@ func (session *Session) ReceivePacket() (packet []byte, err error) {
 	return
 }
 
-// ReleaseReceivePacket releases a packet ReceivePacket returned; it does nothing for an ended, zero or nil Session.
+// ReleaseReceivePacket releases a packet ReceivePacket returned; it does nothing for a nil packet or an ended, zero or
+// nil Session.
 func (session *Session) ReleaseReceivePacket(packet []byte) {
 	handle := session.live()
-	if handle == 0 {
+	if packet == nil || handle == 0 {
 		return
 	}
 	if addr, err := procWintunReleaseReceivePacket.address(); err == nil {
-		syscall.Syscall(addr, 2, handle, uintptr(unsafe.Pointer(&packet[0])), 0)
+		// gc keeps the DLL's address in the data word of a 0-byte packet too, which SliceData returns.
+		syscall.Syscall(addr, 2, handle, uintptr(unsafe.Pointer(unsafe.SliceData(packet))), 0)
 	}
 }
 
-// AllocateSendPacket returns packetSize bytes of the send ring; for an ended, zero or nil Session it returns
-// windows.ERROR_HANDLE_EOF.
+// AllocateSendPacket returns packetSize bytes of the send ring; it returns windows.ERROR_INVALID_PARAMETER for a
+// packetSize outside 0 to PacketSizeMax, and windows.ERROR_HANDLE_EOF for an ended, zero or nil Session.
 func (session *Session) AllocateSendPacket(packetSize int) (packet []byte, err error) {
+	if packetSize < 0 || packetSize > PacketSizeMax {
+		return nil, windows.ERROR_INVALID_PARAMETER
+	}
 	handle := session.live()
 	if handle == 0 {
 		return nil, windows.ERROR_HANDLE_EOF
@@ -153,13 +158,14 @@ func (session *Session) AllocateSendPacket(packetSize int) (packet []byte, err e
 	return
 }
 
-// SendPacket sends a packet AllocateSendPacket returned; it does nothing for an ended, zero or nil Session.
+// SendPacket sends a packet AllocateSendPacket returned; it does nothing for a nil packet or an ended, zero or nil
+// Session.
 func (session *Session) SendPacket(packet []byte) {
 	handle := session.live()
-	if handle == 0 {
+	if packet == nil || handle == 0 {
 		return
 	}
 	if addr, err := procWintunSendPacket.address(); err == nil {
-		syscall.Syscall(addr, 2, handle, uintptr(unsafe.Pointer(&packet[0])), 0)
+		syscall.Syscall(addr, 2, handle, uintptr(unsafe.Pointer(unsafe.SliceData(packet))), 0)
 	}
 }
